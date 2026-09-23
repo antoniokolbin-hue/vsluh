@@ -118,7 +118,15 @@ button:focus-visible,label:focus-visible,input:focus-visible{outline:2px solid v
 .ctl svg{width:24px;height:24px}
 .ctl:active{background:var(--hl)}
 .play{width:64px;height:64px;border-radius:32px;background:var(--accent);color:var(--accent-ink);display:grid;place-items:center;box-shadow:0 6px 18px rgba(41,70,200,.28);position:relative}
-.play svg{width:28px;height:28px}
+.play svg{width:28px;height:28px;grid-area:1/1;transition:opacity .18s ease,transform .26s cubic-bezier(.2,.8,.2,1)}
+.play .ic-pause{opacity:0;transform:scale(.5) rotate(-90deg)}
+.play.on .ic-play{opacity:0;transform:scale(.5) rotate(90deg)}
+.play.on .ic-pause{opacity:1;transform:none}
+.play{transition:transform .12s ease}
+.play:active{transform:scale(.92)}
+.play::after{content:"";position:absolute;inset:0;border-radius:50%;pointer-events:none}
+.play.on::after{animation:halo 2.2s ease-out infinite}
+@keyframes halo{0%{box-shadow:0 0 0 0 var(--hl-edge)}100%{box-shadow:0 0 0 16px transparent}}
 .play .spin{position:absolute;inset:-5px;border-radius:50%;border:2px solid transparent;border-top-color:var(--accent);animation:spin 1s linear infinite}
 @keyframes spin{to{transform:rotate(360deg)}}
 .speed{justify-self:center;height:32px;min-width:52px;padding:0 10px;border-radius:16px;border:1px solid var(--line);font-weight:600;font-size:13.5px;font-variant-numeric:tabular-nums;color:var(--soft)}
@@ -206,7 +214,7 @@ button:focus-visible,label:focus-visible,input:focus-visible{outline:2px solid v
       <div class="controls">
         <button class="ctl skip" id="prevBtn" aria-label="Предыдущее предложение"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 6l-6 6 6 6M19 6l-6 6 6 6"/></svg></button>
         <span></span>
-        <button class="play" id="playBtn" aria-label="Слушать"><svg id="icPlay" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5.5v13a1 1 0 001.5.86l10.4-6.5a1 1 0 000-1.72L9.5 4.64A1 1 0 008 5.5z"/></svg><svg id="icPause" viewBox="0 0 24 24" fill="currentColor" hidden><rect x="6.5" y="5" width="4" height="14" rx="1.2"/><rect x="13.5" y="5" width="4" height="14" rx="1.2"/></svg><i class="spin" id="spin" hidden></i></button>
+        <button class="play" id="playBtn" aria-label="Слушать"><svg class="ic-play" id="icPlay" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5.5v13a1 1 0 001.5.86l10.4-6.5a1 1 0 000-1.72L9.5 4.64A1 1 0 008 5.5z"/></svg><svg class="ic-pause" id="icPause" viewBox="0 0 24 24" fill="currentColor"><rect x="6.5" y="5" width="4" height="14" rx="1.2"/><rect x="13.5" y="5" width="4" height="14" rx="1.2"/></svg><i class="spin" id="spin" hidden></i></button>
         <button class="speed" id="speedBtn" aria-label="Скорость">1×</button>
         <button class="ctl skip" id="nextBtn" aria-label="Следующее предложение"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 6l6 6-6 6M5 6l6 6-6 6"/></svg></button>
       </div>
