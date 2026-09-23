@@ -78,16 +78,26 @@ async function getAsset(path, label) {
   return buf.buffer;
 }
 
+// Движок произношения (eSpeak) живёт в маленькой фиксированной памяти и после некоторых
+// фраз (латиница, эмодзи, редкие символы) может «сломаться». Поэтому держим его готовым
+// к мгновенному перезапуску: скомпилированный модуль и словарь уже в памяти.
+let phonModule = null, phonData = null, phonDirty = false;
 async function loadPhonemizer() {
-  if (phon) return;
+  if (phonModule) { if (!phon) phon = await makePhon(); return; }
   const [wasm, data] = await Promise.all([
     getAsset('piper_phonemize.wasm', 'Движок произношения'),
     getAsset('piper_phonemize.data', 'Словарь произношения'),
   ]);
-  phon = await createPiperPhonemize({
+  phonModule = await WebAssembly.compile(wasm);
+  phonData = data;
+  phon = await makePhon();
+}
+function makePhon() {
+  phonDirty = false;
+  return createPiperPhonemize({
     noInitialRun: true,
-    wasmBinary: wasm,
-    getPreloadedPackage: () => data,
+    instantiateWasm: (imports, done) => { WebAssembly.instantiate(phonModule, imports).then((inst) => done(inst)); return {}; },
+    getPreloadedPackage: () => phonData,
     print: (line) => { phonOut = line; },
     printErr: () => {},
     locateFile: (u) => base + u,
@@ -104,18 +114,33 @@ async function loadVoice(name) {
   voiceName = name;
 }
 
-function phonemize(text) {
+function phonemizeOnce(text) {
   phonOut = null;
   try {
     phon.callMain(['-l', 'ru', '--input', JSON.stringify([{ text }]), '--espeak_data', '/espeak-ng-data']);
-  } catch (e) { /* emscripten exit — нормально */ }
-  if (!phonOut) return null;
+  } catch (e) { phonDirty = true; }
+  if (!phonOut) { phonDirty = true; return null; }
   try { return JSON.parse(phonOut).phoneme_ids; } catch (e) { return null; }
+}
+const RISKY = /[^\u0400-\u04FF0-9\s.,!?;:()'\-]/;
+async function phonemize(text) {
+  if (phonDirty) phon = await makePhon();
+  let ids = phonemizeOnce(text);
+  if (!ids) {                       // перезапуск и вторая попытка
+    phon = await makePhon();
+    ids = phonemizeOnce(text);
+  }
+  if (!ids) {                       // третья: только кириллица и цифры
+    phon = await makePhon();
+    ids = phonemizeOnce(text.replace(/[^\u0400-\u04FF0-9\s.,!?;:\-]/g, ' ').replace(/\s+/g, ' ').trim() || '.');
+  }
+  if (RISKY.test(text)) phonDirty = true;   // латиница и т.п. — на всякий случай освежим движок
+  return ids;
 }
 
 let stats = null;  // диагностика последнего предложения
 async function synthPiece(text) {
-  const ids = phonemize(text);
+  const ids = await phonemize(text);
   if (!ids) throw new Error('движок произношения не ответил');
   if (ids.length < 3) return new Float32Array(0);
   const feeds = {
@@ -176,6 +201,8 @@ async function handle(m) {
       })();
       await ready;
       postMessage({ type: 'ready', voice: m.voice });
+    } else if (m.type === 'reset') {
+      if (phonModule) phon = await makePhon();
     } else if (m.type === 'synth') {
       await ready;
       const t0 = performance.now();
