@@ -94,6 +94,7 @@ async function loadPhonemizer() {
 }
 function makePhon() {
   phonDirty = false;
+  phon = null;   // отпускаем старый экземпляр, чтобы память освободилась
   return createPiperPhonemize({
     noInitialRun: true,
     instantiateWasm: (imports, done) => { WebAssembly.instantiate(phonModule, imports).then((inst) => done(inst)); return {}; },
@@ -110,7 +111,8 @@ async function loadVoice(name) {
   const model = await getAsset(name + '.onnx', 'Голос');
   postMessage({ type: 'status', text: 'Запускаю голос…' });
   if (session) { try { await session.release(); } catch (e) {} }
-  session = await ort.InferenceSession.create(model, { executionProviders: ['wasm'], graphOptimizationLevel: 'all' });
+  // без «арены» ORT не держит пиковую память навсегда — важно для iPhone
+  session = await ort.InferenceSession.create(model, { executionProviders: ['wasm'], graphOptimizationLevel: 'all', enableCpuMemArena: false, enableMemPattern: false });
   voiceName = name;
 }
 
@@ -122,7 +124,6 @@ function phonemizeOnce(text) {
   if (!phonOut) { phonDirty = true; return null; }
   try { return JSON.parse(phonOut).phoneme_ids; } catch (e) { return null; }
 }
-const RISKY = /[^\u0400-\u04FF0-9\s.,!?;:()'\-]/;
 async function phonemize(text) {
   if (phonDirty) phon = await makePhon();
   let ids = phonemizeOnce(text);
@@ -134,7 +135,6 @@ async function phonemize(text) {
     phon = await makePhon();
     ids = phonemizeOnce(text.replace(/[^\u0400-\u04FF0-9\s.,!?;:\-]/g, ' ').replace(/\s+/g, ' ').trim() || '.');
   }
-  if (RISKY.test(text)) phonDirty = true;   // латиница и т.п. — на всякий случай освежим движок
   return ids;
 }
 
