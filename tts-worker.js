@@ -113,16 +113,27 @@ function phonemize(text) {
   try { return JSON.parse(phonOut).phoneme_ids; } catch (e) { return null; }
 }
 
+let stats = null;  // диагностика последнего предложения
 async function synthPiece(text) {
   const ids = phonemize(text);
-  if (!ids || ids.length < 3) return new Float32Array(0);
+  if (!ids) throw new Error('движок произношения не ответил');
+  if (ids.length < 3) return new Float32Array(0);
   const feeds = {
     input: new ort.Tensor('int64', BigInt64Array.from(ids.map(BigInt)), [1, ids.length]),
     input_lengths: new ort.Tensor('int64', BigInt64Array.from([BigInt(ids.length)]), [1]),
     scales: new ort.Tensor('float32', Float32Array.from([0.667, 1.0, 0.8]), [3]),
   };
   const out = await session.run(feeds);
-  return out.output.data;
+  const a = out.output.data;
+  // считаем «битые» значения и громкость — чтобы тишина не маскировалась под речь
+  let nan = 0, peak = 0;
+  for (let i = 0; i < a.length; i++) {
+    const v = a[i];
+    if (v !== v || v === Infinity || v === -Infinity) { a[i] = 0; nan++; }
+    else { const x = v < 0 ? -v : v; if (x > peak) peak = x; }
+  }
+  stats.ids += ids.length; stats.samples += a.length; stats.nan += nan; if (peak > stats.peak) stats.peak = peak;
+  return a;
 }
 
 function toInt16(f32) {
@@ -137,6 +148,7 @@ function toInt16(f32) {
 
 // Генерирует одно «предложение» (может состоять из нескольких кусков)
 async function synthSentence(pieces) {
+  stats = { ids: 0, samples: 0, nan: 0, peak: 0 };
   const gap = Math.round(SAMPLE_RATE * 0.12);
   const parts = [];
   let len = 0;
@@ -168,7 +180,7 @@ async function handle(m) {
       await ready;
       const t0 = performance.now();
       const pcm = await synthSentence(m.pieces);
-      postMessage({ type: 'audio', id: m.id, pcm, ms: performance.now() - t0 }, [pcm.buffer]);
+      postMessage({ type: 'audio', id: m.id, pcm, ms: performance.now() - t0, stats }, [pcm.buffer]);
     }
   } catch (err) {
     postMessage({ type: 'error', id: m.id, message: String(err && err.message || err) });
