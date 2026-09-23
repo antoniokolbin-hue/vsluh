@@ -82,10 +82,10 @@ function fmtDur(sec) {
 }
 const fmtMB = (b) => (b / 1048576).toFixed(b > 104857600 ? 0 : 1).replace('.', ',') + ' МБ';
 let toastT;
-function toast(msg) {
+function toast(msg, ms = 2600) {
   const t = $('#toast');
   t.textContent = msg; t.classList.add('on');
-  clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove('on'), 2600);
+  clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove('on'), ms);
 }
 
 /* ───────────── ZIP (для fb2.zip и epub) ───────────── */
@@ -656,9 +656,20 @@ const Engine = {
     if (this.worker && this.voiceReady === settings.voice) return this.loadingVoice || Promise.resolve();
     if (this.loadingVoice && this.loadingVoiceName === settings.voice) return this.loadingVoice;
     if (!this.worker) {
-      this.worker = new Worker('tts-worker.js', { type: 'module' });
-      this.worker.onmessage = (e) => this.onMsg(e.data);
-      this.worker.onerror = (e) => { this.error = 'Сбой движка озвучки'; UI.status(); };
+      const w = this.worker = new Worker('tts-worker.js', { type: 'module' });
+      this.nSynth = 0;   // сколько фраз озвучил этот экземпляр движка (для журнала обрывов)
+      w.onmessage = (e) => this.onMsg(e.data);
+      // движок упал целиком — не ждём от него ответов вечно: отпускаем очередь и начнём с нового
+      w.onerror = () => {
+        if (this.worker !== w) return;
+        const err = new Error('сбой движка озвучки');
+        for (const [, p] of this.pending) p.rej(err);
+        this.pending.clear();
+        if (this.loadingVoice) { this.loadingVoice = null; this._vrej && this._vrej(err); }
+        try { w.terminate(); } catch (e) {}
+        this.worker = null; this.voiceReady = false; this.dl = null;
+        this.error = 'Сбой движка озвучки'; UI.status();
+      };
     }
     this.error = null;
     this.voiceReady = false;
@@ -676,6 +687,7 @@ const Engine = {
       this.dl = null; this.voiceReady = m.voice; this.loadingVoice = null;
       this._vres && this._vres(); this.pump(); UI.status(); UI.voices();
     } else if (m.type === 'audio') {
+      this.nSynth = (this.nSynth || 0) + 1;
       const p = this.pending.get(m.id); this.pending.delete(m.id); p && p.res(m);
     } else if (m.type === 'error') {
       if (m.id != null && this.pending.has(m.id)) { const p = this.pending.get(m.id); this.pending.delete(m.id); p.rej(new Error(m.message)); }
@@ -912,6 +924,7 @@ const Player = {
 
   pause() {
     this.want = false;           // пользователь сам поставил паузу
+    LS.del('alive');             // обычная остановка — не обрыв (см. журнал обрывов)
     this.waiting = false; this.waitFor = null;
     this.playing = false;
     try { this.audio.pause(); } catch (e) {}
@@ -1185,6 +1198,7 @@ $('#setBtn').onclick = async () => {
   $('#fontIn').value = settings.font;
   document.querySelectorAll('#themeSeg button').forEach((b) => b.classList.toggle('on', b.dataset.v === settings.theme));
   openSheet('#setSheet');
+  Diag.render();
   try {
     const e = await navigator.storage.estimate();
     $('#storeInfo').textContent = 'Занято на устройстве: ' + fmtMB(e.usage || 0);
@@ -1241,7 +1255,56 @@ function applyLook() {
   document.querySelectorAll('meta[name=theme-color]').forEach((m) => { if (settings.theme !== 'auto') m.setAttribute('content', bg); });
 }
 
+/* ───────────── сборка и журнал обрывов ─────────────
+   Если iOS перезапустит страницу посреди прослушивания (сбой движка или нехватка памяти),
+   при следующем запуске приложение это заметит: всплывёт подсказка, а в настройках
+   останется запись — в каком состоянии всё было. Так чиним по фактам, а не наугад. */
+const BUILD = '23.09 · 4';
+const Diag = {
+  t0: 0, gone: false,
+  beat() {
+    if (this.gone) return;   // страницу закрывают штатно — это не обрыв
+    if (!book || !(Player.playing || Player.waiting)) { this.t0 = 0; LS.del('alive'); return; }
+    if (!this.t0) this.t0 = Date.now();
+    LS.set('alive', {
+      t: Date.now(), b: BUILD, p: pos,
+      min: Math.round((Date.now() - this.t0) / 60000),
+      st: Player.playing ? 'играл' : 'ждал озвучку',
+      scr: document.hidden ? 'выключен' : 'включён',
+      eng: !Engine.worker ? 'выгружен' : (Engine.busy ? 'озвучивал' : 'ждал') + ` (фраз: ${Engine.nSynth || 0})`,
+      ahead: Math.round(Engine.aheadSec() / 60),
+    });
+  },
+  check() {
+    const a = LS.get('alive', null);
+    LS.del('alive');
+    if (!a || !a.t) return;
+    const log = LS.get('drops', []);
+    log.unshift(a);
+    LS.set('drops', log.slice(0, 5));
+    setTimeout(() => toast('Прослушивание оборвалось: iOS перезапустил страницу. Подробности — Настройки → Память', 7000), 1500);
+  },
+  render() {
+    let el = $('#diagInfo');
+    if (!el && $('#storeInfo')) {   // на случай старого index.html
+      el = document.createElement('p'); el.className = 'note'; el.id = 'diagInfo';
+      $('#storeInfo').closest('.grp').appendChild(el);
+    }
+    if (!el) return;
+    const log = LS.get('drops', []);
+    const when = (t) => new Date(t).toLocaleString('ru-RU', { day: 'numeric', month: 'numeric', hour: '2-digit', minute: '2-digit' });
+    el.innerHTML = 'Сборка ' + BUILD + (log.length
+      ? '<br>Обрывы прослушивания:<br>' + log.map((d) => esc(`${when(d.t)} — фраза ${d.p}, ${d.st}, ${d.min} мин от старта, экран ${d.scr}, движок ${d.eng}, запас ${d.ahead} мин` + (d.b !== BUILD ? `, сборка ${d.b}` : ''))).join('<br>')
+      : ' · обрывов прослушивания не было');
+  },
+};
+setInterval(() => { Diag.gone = false; Diag.beat(); }, 5000);   // таймер тикает — значит, страница жива
+document.addEventListener('visibilitychange', () => Diag.beat());
+window.addEventListener('pagehide', () => { Diag.gone = true; LS.del('alive'); });
+window.addEventListener('pageshow', () => { Diag.gone = false; });
+
 /* ───────────── запуск ───────────── */
+Diag.check();
 applyLook();
 UI.speed();
 // iOS: звук как у плеера — играет при беззвучном режиме и в фоне
