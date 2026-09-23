@@ -348,6 +348,8 @@ function ttsPieces(text, kind) {
     .replace(/\s+,/g, ',')
     .replace(/,(\s*,)+/g, ',')
     .replace(/\*+/g, '')
+    .replace(/№/g, ' номер ').replace(/§/g, ' параграф ')
+    .replace(/[^\p{L}\p{N}\s.,!?;:()%'\-]/gu, ' ')   // эмодзи и редкие символы движок не любит
     .replace(/\s+/g, ' ').trim();
   if (kind === 'h' || kind === 's') t = t.replace(/\b([IVXLC]{1,7})\b/g, (m) => String(roman(m)));
   if (!/[\p{L}\p{N}]/u.test(t)) return [];
@@ -1041,7 +1043,7 @@ const UI = {
   play() {
     const busy = Player.waiting;
     const on = Player.playing || busy;
-    $('#icPlay').hidden = on; $('#icPause').hidden = !on;
+    $('#playBtn').classList.toggle('on', on);   // иконка ▶/❚❚ переключается анимацией в CSS
     $('#spin').hidden = !busy;
     $('#playBtn').setAttribute('aria-label', on ? 'Пауза' : 'Слушать');
     document.body.classList.toggle('playing', on);
@@ -1065,7 +1067,7 @@ const UI = {
       else { html = `Готово впрок: ${fmtDur(a)}`; }
     }
     st.className = 'status ' + cls; tx.innerHTML = html;
-    const rb = $('#retryBtn'); if (rb) rb.onclick = () => { Engine.error = null; Engine.active = true; Engine.loadingVoice = null; Engine.voiceReady = false; Engine.ensureWorker(); Engine.pump(); };
+    const rb = $('#retryBtn'); if (rb) rb.onclick = () => { Engine.error = null; Engine.active = true; if (Engine.worker) Engine.worker.postMessage({ type: 'reset' }); Engine.loadingVoice = null; Engine.voiceReady = false; Engine.ensureWorker(); Engine.pump(); };
   },
   posBar() {
     if (!M) return;
