@@ -1,6 +1,6 @@
 // Вслух — офлайн-режим. Оболочка приложения кэшируется при установке,
 // голоса и движки кэширует сам воркер озвучки (vsluh-assets-v1).
-const SHELL = 'vsluh-shell-v1';
+const SHELL = 'vsluh-shell-v2';
 const FILES = [
   './', 'index.html', 'app.js', 'tts-worker.js', 'manifest.webmanifest',
   'ort.wasm.bundle.min.mjs', 'ort-wasm-simd-threaded.mjs', 'piper_phonemize.mjs',
@@ -17,15 +17,18 @@ self.addEventListener('activate', (e) => {
 self.addEventListener('fetch', (e) => {
   const req = e.request;
   if (req.method !== 'GET' || new URL(req.url).origin !== location.origin) return;
-  const isShell = req.mode === 'navigate' || /\/(index\.html|app\.js|tts-worker\.js|sw\.js)?$/.test(new URL(req.url).pathname) || /\.(js|mjs|webmanifest)$/.test(req.url);
   e.respondWith((async () => {
-    const hit = await caches.match(req, { ignoreSearch: true }) || (req.mode === 'navigate' ? await caches.match('index.html') : null);
-    if (hit && isShell) {
-      // отдаём из кэша мгновенно, а в фоне тихо обновляем
-      e.waitUntil(fetch(req).then((r) => { if (r.ok) return caches.open(SHELL).then((c) => c.put(req, r)); }).catch(() => {}));
-      return hit;
+    // сначала сеть (свежая версия), при офлайне — кэш
+    try {
+      const ctl = new AbortController();
+      const t = setTimeout(() => ctl.abort(), 4000);
+      const r = await fetch(req.mode === 'navigate' ? req.url : req, { signal: ctl.signal, cache: 'no-cache' });
+      clearTimeout(t);
+      if (r.ok) { const c = await caches.open(SHELL); c.put(req, r.clone()).catch(() => {}); }
+      return r;
+    } catch (err) {
+      const hit = await caches.match(req, { ignoreSearch: true }) || (req.mode === 'navigate' ? await caches.match('index.html') : null);
+      return hit || Response.error();
     }
-    if (hit) return hit;
-    try { return await fetch(req); } catch (err) { return hit || Response.error(); }
   })());
 });
