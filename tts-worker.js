@@ -1,0 +1,176 @@
+// Вслух — фоновый синтез речи. Работает полностью офлайн:
+// espeak-ng (фонемы) + Piper VITS (нейросеть) через onnxruntime-web.
+import * as ort from './ort.wasm.bundle.min.mjs';
+import createPiperPhonemize from './piper_phonemize.mjs';
+
+const ASSET_CACHE = 'vsluh-assets-v1';
+const base = new URL('./', import.meta.url).href;
+const SAMPLE_RATE = 22050;
+
+ort.env.wasm.wasmPaths = base;
+ort.env.wasm.numThreads = 1;
+ort.env.wasm.proxy = false;
+
+let phon = null;          // модуль espeak
+let phonOut = null;       // куда пишет print()
+let session = null;       // ONNX-сессия голоса
+let voiceName = null;
+let ready = null;
+
+// Скачать файл(ы) один раз и навсегда положить в Cache Storage (с прогрессом).
+// Большие голоса лежат на сервере кусками по 20 МБ и склеиваются здесь.
+// Тяжёлые файлы берём с публичных CDN (jsDelivr, Hugging Face) один раз и кэшируем.
+// Если рядом с приложением лежат куски *.partN — они подойдут как запасной вариант.
+const HF = 'https://huggingface.co/rhasspy/piper-voices/resolve/main/ru/ru_RU/';
+const SOURCES = {
+  'ort-wasm-simd-threaded.wasm': { size: 14239897, urls: [['https://cdn.jsdelivr.net/npm/onnxruntime-web@1.30.0/dist/ort-wasm-simd-threaded.wasm'], 2] },
+  'piper_phonemize.data': { size: 18077249, urls: [['https://cdn.jsdelivr.net/npm/@diffusionstudio/piper-wasm@1.0.0/build/piper_phonemize.data'], 2] },
+};
+for (const v of ['denis', 'dmitri', 'irina', 'ruslan']) SOURCES[v + '.onnx'] = { size: 63201294, urls: [[HF + v + '/medium/ru_RU-' + v + '-medium.onnx'], 7] };
+
+async function openCache() { try { return await caches.open(ASSET_CACHE); } catch (e) { return null; } }
+
+async function download(urls, label, totalHint) {
+  const parts = [];
+  let got = 0, lastPost = 0, total = totalHint || 0;
+  for (const url of urls) {
+    const res = await fetch(url);
+    if (!res.ok) throw new Error('Не удалось скачать ' + url.split('/').pop() + ' (' + res.status + ')');
+    if (!totalHint) total += +res.headers.get('content-length') || 0;
+    const reader = res.body.getReader();
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      parts.push(value);
+      got += value.length;
+      const now = Date.now();
+      if (now - lastPost > 150) { lastPost = now; postMessage({ type: 'progress', label, got, total: Math.max(total, got) }); }
+    }
+  }
+  const buf = new Uint8Array(got);
+  let o = 0;
+  for (const p of parts) { buf.set(p, o); o += p.length; }
+  postMessage({ type: 'progress', label, got, total: got });
+  return buf;
+}
+
+async function getAsset(path, label) {
+  const url = base + path;
+  const cache = await openCache();
+  if (cache) {
+    const hit = await cache.match(url);
+    if (hit) return await hit.arrayBuffer();
+  }
+  const src = SOURCES[path];
+  const variants = src
+    ? [src.urls[0], Array.from({ length: src.urls[1] }, (_, i) => url + '.part' + i)]
+    : [[url]];
+  let buf = null, lastErr = null;
+  for (const urls of variants) {
+    try { buf = await download(urls, label, src ? src.size : 0); break; }
+    catch (e) { lastErr = e; }
+  }
+  if (!buf) throw new Error('Нет интернета или файл недоступен — ' + (lastErr && lastErr.message));
+  if (cache) {
+    try { await cache.put(url, new Response(buf, { headers: { 'content-type': 'application/octet-stream' } })); }
+    catch (e) { /* нет места — просто не кэшируем */ }
+  }
+  return buf.buffer;
+}
+
+async function loadPhonemizer() {
+  if (phon) return;
+  const [wasm, data] = await Promise.all([
+    getAsset('piper_phonemize.wasm', 'Движок произношения'),
+    getAsset('piper_phonemize.data', 'Словарь произношения'),
+  ]);
+  phon = await createPiperPhonemize({
+    noInitialRun: true,
+    wasmBinary: wasm,
+    getPreloadedPackage: () => data,
+    print: (line) => { phonOut = line; },
+    printErr: () => {},
+    locateFile: (u) => base + u,
+  });
+}
+
+async function loadVoice(name) {
+  if (session && voiceName === name) return;
+  if (!ort.env.wasm.wasmBinary) ort.env.wasm.wasmBinary = await getAsset('ort-wasm-simd-threaded.wasm', 'Нейродвижок');
+  const model = await getAsset(name + '.onnx', 'Голос');
+  postMessage({ type: 'status', text: 'Запускаю голос…' });
+  if (session) { try { await session.release(); } catch (e) {} }
+  session = await ort.InferenceSession.create(model, { executionProviders: ['wasm'], graphOptimizationLevel: 'all' });
+  voiceName = name;
+}
+
+function phonemize(text) {
+  phonOut = null;
+  try {
+    phon.callMain(['-l', 'ru', '--input', JSON.stringify([{ text }]), '--espeak_data', '/espeak-ng-data']);
+  } catch (e) { /* emscripten exit — нормально */ }
+  if (!phonOut) return null;
+  try { return JSON.parse(phonOut).phoneme_ids; } catch (e) { return null; }
+}
+
+async function synthPiece(text) {
+  const ids = phonemize(text);
+  if (!ids || ids.length < 3) return new Float32Array(0);
+  const feeds = {
+    input: new ort.Tensor('int64', BigInt64Array.from(ids.map(BigInt)), [1, ids.length]),
+    input_lengths: new ort.Tensor('int64', BigInt64Array.from([BigInt(ids.length)]), [1]),
+    scales: new ort.Tensor('float32', Float32Array.from([0.667, 1.0, 0.8]), [3]),
+  };
+  const out = await session.run(feeds);
+  return out.output.data;
+}
+
+function toInt16(f32) {
+  const out = new Int16Array(f32.length);
+  for (let i = 0; i < f32.length; i++) {
+    let s = f32[i];
+    s = s < -1 ? -1 : s > 1 ? 1 : s;
+    out[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+  }
+  return out;
+}
+
+// Генерирует одно «предложение» (может состоять из нескольких кусков)
+async function synthSentence(pieces) {
+  const gap = Math.round(SAMPLE_RATE * 0.12);
+  const parts = [];
+  let len = 0;
+  for (let i = 0; i < pieces.length; i++) {
+    const a = await synthPiece(pieces[i]);
+    parts.push(a); len += a.length;
+    if (i < pieces.length - 1) { parts.push(new Float32Array(gap)); len += gap; }
+  }
+  const all = new Float32Array(len);
+  let o = 0;
+  for (const p of parts) { all.set(p, o); o += p.length; }
+  return toInt16(all);
+}
+
+// Все задачи выполняем строго по очереди: ORT не любит параллельные run()
+let chain = Promise.resolve();
+onmessage = (e) => { chain = chain.then(() => handle(e.data)); };
+
+async function handle(m) {
+  try {
+    if (m.type === 'init') {
+      ready = (async () => {
+        await loadPhonemizer();
+        await loadVoice(m.voice);
+      })();
+      await ready;
+      postMessage({ type: 'ready', voice: m.voice });
+    } else if (m.type === 'synth') {
+      await ready;
+      const t0 = performance.now();
+      const pcm = await synthSentence(m.pieces);
+      postMessage({ type: 'audio', id: m.id, pcm, ms: performance.now() - t0 }, [pcm.buffer]);
+    }
+  } catch (err) {
+    postMessage({ type: 'error', id: m.id, message: String(err && err.message || err) });
+  }
+}

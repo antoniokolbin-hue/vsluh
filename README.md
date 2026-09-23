@@ -1,2 +1,10 @@
-# vsluh
-audio book
+# Вслух
+
+Читалка для iPhone, которая читает книги вслух нейросетевым голосом — полностью офлайн.
+
+- Форматы: FB2, FB2.ZIP, EPUB, TXT
+- Голоса: Piper (ru_RU: denis, dmitri, irina, ruslan), произношение eSpeak NG, движок onnxruntime-web
+- Всё хранится на устройстве (IndexedDB + Cache Storage), серверов нет
+
+Хостинг: любой статический (GitHub Pages). Файлы голосов разбиты на куски по 20 МБ,
+чтобы проходить лимит веб-загрузки GitHub (25 МБ).
