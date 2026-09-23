@@ -78,26 +78,32 @@ async function getAsset(path, label) {
   return buf.buffer;
 }
 
-// Движок произношения (eSpeak) живёт в маленькой фиксированной памяти и после некоторых
-// фраз (латиница, эмодзи, редкие символы) может «сломаться». Поэтому держим его готовым
-// к мгновенному перезапуску: скомпилированный модуль и словарь уже в памяти.
-let phonModule = null, phonData = null, phonDirty = false;
+// Движок произношения (eSpeak) — маленький wasm-модуль. Две его особенности:
+// 1) у него фиксированная память, и через несколько десятков фраз он «переполняется»;
+// 2) в Safari (JavaScriptCore) долгоживущий экземпляр eSpeak доводит оптимизирующий
+//    компилятор wasm до падения, и iOS перезагружает страницу.
+// Поэтому движок живёт коротко: каждые PHON_LIFE фраз он собирается заново из байтов
+// (новая компиляция обнуляет «горячесть» кода), а при любой ошибке — сразу.
+const PHON_LIFE = 20;
+let phonBytes = null, phonData = null, phonDirty = false, phonUses = 0;
 async function loadPhonemizer() {
-  if (phonModule) { if (!phon) phon = await makePhon(); return; }
+  if (phonBytes) { if (!phon) phon = await makePhon(); return; }
   const [wasm, data] = await Promise.all([
     getAsset('piper_phonemize.wasm', 'Движок произношения'),
     getAsset('piper_phonemize.data', 'Словарь произношения'),
   ]);
-  phonModule = await WebAssembly.compile(wasm);
+  phonBytes = wasm;
   phonData = data;
   phon = await makePhon();
 }
-function makePhon() {
+async function makePhon() {
   phonDirty = false;
+  phonUses = 0;
   phon = null;   // отпускаем старый экземпляр, чтобы память освободилась
+  const mod = await WebAssembly.compile(phonBytes);   // свежая компиляция, а не повторный экземпляр
   return createPiperPhonemize({
     noInitialRun: true,
-    instantiateWasm: (imports, done) => { WebAssembly.instantiate(phonModule, imports).then((inst) => done(inst)); return {}; },
+    instantiateWasm: (imports, done) => { WebAssembly.instantiate(mod, imports).then((inst) => done(inst)); return {}; },
     getPreloadedPackage: () => phonData,
     print: (line) => { phonOut = line; },
     printErr: () => {},
@@ -125,7 +131,8 @@ function phonemizeOnce(text) {
   try { return JSON.parse(phonOut).phoneme_ids; } catch (e) { return null; }
 }
 async function phonemize(text) {
-  if (phonDirty) phon = await makePhon();
+  if (phonDirty || phonUses >= PHON_LIFE) phon = await makePhon();
+  phonUses++;
   let ids = phonemizeOnce(text);
   if (!ids) {                       // перезапуск и вторая попытка
     phon = await makePhon();
@@ -202,7 +209,7 @@ async function handle(m) {
       await ready;
       postMessage({ type: 'ready', voice: m.voice });
     } else if (m.type === 'reset') {
-      if (phonModule) phon = await makePhon();
+      if (phonBytes) phon = await makePhon();
     } else if (m.type === 'synth') {
       await ready;
       const t0 = performance.now();
