@@ -226,15 +226,13 @@ button:focus-visible,label:focus-visible,input:focus-visible{outline:2px solid v
   <div class="sheet-head"><h3>Настройки</h3><button data-close>Готово</button></div>
   <div class="sheet-body">
     <div class="grp"><h4>Голос</h4><div class="voices" id="voices"></div>
-      <p class="note">Голос скачивается один раз (~61 МБ) и дальше работает без интернета.</p></div>
+      <p class="note">Голос скачивается один раз (~60 МБ) и дальше работает без интернета. Приложение озвучивает текст примерно на час вперёд — этот запас играет и при заблокированном экране.</p>
+      <div class="row" style="margin-top:10px"><button class="btn-line" id="testVoice">Проверить голос</button><span id="testOut" class="note" style="margin:0;flex:1"></span></div></div>
     <div class="grp"><h4>Текст</h4>
       <div class="row"><span class="aa" style="font-size:14px">А</span><input id="fontIn" type="range" min="15" max="28" step="1"><span class="aa" style="font-size:24px">А</span></div>
     </div>
     <div class="grp"><h4>Тема</h4><div class="seg" id="themeSeg">
       <button data-v="auto">Авто</button><button data-v="light">Светлая</button><button data-v="sepia">Бумага</button><button data-v="dark">Тёмная</button></div></div>
-    <div class="grp"><h4>Озвучивать впрок</h4><div class="seg" id="aheadSeg">
-      <button data-v="1800">30 мин</button><button data-v="3600">1 ч</button><button data-v="7200">2 ч</button><button data-v="14400">4 ч</button></div>
-      <p class="note">Пока приложение открыто, оно заранее озвучивает текст вперёд. Готовый запас играет даже при заблокированном экране.</p></div>
     <div class="grp"><h4>Память</h4>
       <div class="row"><span id="storeInfo" class="note" style="margin:0;flex:1">—</span><button class="btn-line" id="clearAudio">Удалить озвучку</button></div>
     </div>
