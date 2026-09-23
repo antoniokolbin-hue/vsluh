@@ -61,7 +61,10 @@ const DB = (() => {
 })();
 
 const settings = Object.assign({ voice: 'denis', speed: 1, font: 19, theme: 'auto' }, LS.get('settings', {}));
-settings.ahead = 3600;           // запас озвучки впрок: 1 час — хватает и не перегружает телефон
+// Озвучка готовится «порциями»: когда впереди меньше AHEAD_LOW — движок просыпается и готовит
+// до AHEAD_HIGH, потом выгружается из памяти. Слушание при этом идёт с готовых файлов на диске.
+const AHEAD_HIGH = 40 * 60, AHEAD_LOW = 12 * 60;
+settings.ahead = AHEAD_HIGH;
 const AUDIO_VER = 3;             // сменить, чтобы выбросить старую озвучку
 const saveSettings = () => LS.set('settings', settings);
 
@@ -639,8 +642,8 @@ const Engine = {
     const rows = await DB.entries('meta', book.id + '|' + settings.voice + '|').catch(() => []);
     for (const [k, v] of rows) this.ready.set(+k.slice(k.lastIndexOf('|') + 1), v);
     this.active = !!book.listened;
+    this.filling = false;
     this.prune();
-    if (this.active) this.ensureWorker();
     this.pump();
     UI.status();
   },
@@ -716,10 +719,33 @@ const Engine = {
     return -1;
   },
 
-  async pump() {
-    if (!this.active || this.busy || !book || this.voiceReady !== settings.voice) { Wake.sync(); return; }
+  // какой кусок озвучивать следующим (или -1, если сейчас ничего не нужно)
+  needWork() {
     const k = this.nextMissing();
-    if (k < 0) { Wake.sync(); UI.status(); return; }
+    if (k < 0) return -1;
+    if (this.filling || this.aheadSec() < AHEAD_LOW) return k;
+    return -1;
+  },
+
+  // движок не нужен — через несколько секунд выгружаем его и освобождаем память
+  scheduleSleep() {
+    if (!this.worker || this._sleepT) return;
+    this._sleepT = setTimeout(() => {
+      this._sleepT = null;
+      if (!this.worker || this.busy || this.pending.size || this.loadingVoice || this.needWork() >= 0) return;
+      this.worker.terminate();
+      this.worker = null; this.voiceReady = false; this.loadingVoice = null;
+      UI.status();
+    }, 8000);
+  },
+
+  async pump() {
+    if (!this.active || this.busy || !book) { Wake.sync(); return; }
+    const k = this.needWork();
+    if (k < 0) { this.filling = false; this.scheduleSleep(); Wake.sync(); UI.status(); return; }
+    this.filling = true;
+    if (this._sleepT) { clearTimeout(this._sleepT); this._sleepT = null; }
+    if (this.voiceReady !== settings.voice) { this.ensureWorker(); return; }   // проснётся — сообщение 'ready' снова вызовет pump
     this.busy = true; Wake.sync(); UI.status();
     const tok = this.token, bid = book.id, voice = settings.voice;
     try {
@@ -744,7 +770,9 @@ const Engine = {
       const all = new Int16Array(len);
       let o = 0; for (const p of parts) { all.set(p, o); o += p.length; }
       const key = bid + '|' + voice + '|' + pad(k);
-      await DB.put('pcm', new Blob([all], { type: 'application/octet-stream' }), key);   // Blob живёт на диске, не в памяти
+      // Blob живёт на диске, не в памяти; если браузер не умеет хранить Blob — сохраняем как есть
+      try { await DB.put('pcm', new Blob([all], { type: 'application/octet-stream' }), key); }
+      catch (e) { await DB.put('pcm', all.buffer, key); }
       await DB.put('meta', { len, offs }, key);
       if (tok !== this.token) return;
       this.ready.set(k, { len, offs });
@@ -753,7 +781,7 @@ const Engine = {
     } catch (err) {
       if (tok !== this.token) return;
       console.error(err);
-      this.error = 'Не получилось озвучить: ' + err.message;
+      this.error = 'Не получилось озвучить: ' + ((err && err.message) || String(err));
       this.active = false;   // не крутим генерацию вхолостую
       Player.onError();
     } finally {
@@ -773,13 +801,13 @@ const Engine = {
     }
   },
 
-  async start() {
+  async start(i = pos) {
     if (!book.listened) { book.listened = true; DB.put('books', book).catch(() => {}); }
     this.active = true;
     try { navigator.storage && navigator.storage.persist && navigator.storage.persist(); } catch (e) {}
-    const p = this.ensureWorker();
     this.pump();
-    return p;
+    if (this.ready.has(this.chunkOf(i))) return;   // играть можно сразу, движок не нужен
+    return this.ensureWorker();
   },
 
   async switchVoice(v) {
@@ -789,8 +817,8 @@ const Engine = {
     this.token++; this.busy = false;
     for (const [, p] of this.pending) p.rej(new Error('cancel'));
     this.pending.clear();
+    if (this.worker) { this.worker.terminate(); this.worker = null; this.voiceReady = false; this.loadingVoice = null; }
     if (book) await this.openBook();
-    if (this.active || this.worker) this.ensureWorker();
     UI.voices();
   },
 };
@@ -827,7 +855,21 @@ const Player = {
     a.preservesPitch = true; a.webkitPreservesPitch = true;
     a.addEventListener('timeupdate', () => this.onTime());
     a.addEventListener('ended', () => this.onEnded());
-    a.addEventListener('pause', () => { if (this.playing && !this._switching && !a.ended) { this.playing = false; UI.play(); savePos(true); } });
+    // если браузер не смог открыть звуковой файл — пересобираем его и продолжаем с того же места
+    a.addEventListener('error', () => {
+      const t = this.track;
+      if (!t || a.src !== t.url || !this.want) return;
+      this._errs = (this._errs || 0) + 1;
+      if (this._errs > 3) { this.playing = false; this.waiting = false; UI.play(); toast('Не получилось воспроизвести — нажмите ▶'); return; }
+      const i = pos;
+      this.track = null;
+      setTimeout(() => { URL.revokeObjectURL(t.url); if (this.want) this.playFrom(i); }, 300 * this._errs);
+    });
+    a.addEventListener('pause', () => {
+      // Safari присылает 'pause' раньше 'ended' — конец трека не считаем остановкой
+      const atEnd = a.ended || (a.duration > 0 && a.currentTime >= a.duration - 0.3);
+      if (this.playing && !this._switching && !atEnd) { this.playing = false; UI.play(); savePos(true); }
+    });
     a.addEventListener('play', () => { if (!this.playing && this.track && a.src === this.track.url) { this.playing = true; UI.play(); } });
     if ('mediaSession' in navigator) {
       const ms = navigator.mediaSession;
@@ -854,6 +896,7 @@ const Player = {
     if (!book) return;
     const on = want === undefined ? !(this.playing || this.waiting) : want;
     if (!on) return this.pause();
+    this.want = true;
     this.unlock();
     const t = this.track, a = this.audio;
     if (t && a.src === t.url && pos >= t.s0 && pos < t.k1 * CH && t.times[pos - t.s0] != null) {
@@ -868,6 +911,7 @@ const Player = {
   },
 
   pause() {
+    this.want = false;           // пользователь сам поставил паузу
     this.waiting = false; this.waitFor = null;
     this.playing = false;
     try { this.audio.pause(); } catch (e) {}
@@ -881,6 +925,7 @@ const Player = {
   },
 
   async playFrom(i, exactOffset) {
+    this.want = true;
     const k = Engine.chunkOf(i);
     const t = this.track, a = this.audio;
     // прыжок внутри уже загруженного трека — мгновенно, без пересборки
@@ -900,7 +945,7 @@ const Player = {
     this.waiting = true; this.waitFor = { k, i, exactOffset };
     document.body.classList.add('playing');
     UI.play(); UI.status();
-    try { await Engine.start(); } catch (e) { this.waiting = false; UI.play(); UI.status(); return; }
+    try { await Engine.start(i); } catch (e) { this.waiting = false; UI.play(); UI.status(); return; }
     if (Engine.ready.has(k)) this.startTrack(k, i, exactOffset);
     else Engine.pump();
   },
@@ -954,7 +999,7 @@ const Player = {
       this.playing = true;
     } catch (e) {
       this.playing = false;
-      toast('Нажмите ▶ ещё раз');
+      if (!a.error) toast('Нажмите ▶ ещё раз');   // ошибку файла обработает 'error' — там повтор
     }
     this._switching = false;
     this.waiting = false; this.waitFor = null;
@@ -973,6 +1018,7 @@ const Player = {
     if (!this.track || !this.playing || this.audio.src !== this.track.url) return;
     const i = this.sentAt(this.audio.currentTime);
     if (i !== pos) {
+      this._errs = 0;   // звук идёт — счётчик ошибок сбрасываем
       setPos(i);
       if (!document.hidden && Date.now() - userScrollAt > 4000) {
         const el = document.getElementById('s' + i);
@@ -984,7 +1030,9 @@ const Player = {
   },
 
   onEnded() {
-    if (!this.track || !this.playing || this.audio.src !== this.track.url) return;
+    // продолжаем, если слушатель не ставил паузу сам (флаг playing мог сброситься событием pause)
+    if (!this.track || !this.want || this.audio.src !== this.track.url) return;
+    this.playing = true;
     const k1 = this.track.k1;
     if (k1 * CH >= M.sents.length) { this.pause(); setPos(M.sents.length - 1); toast('Книга закончилась'); return; }
     if (Engine.ready.has(k1)) { this.waitFor = { k: k1 }; this.startTrack(k1, k1 * CH, 0); }
@@ -1060,14 +1108,12 @@ const UI = {
     else if (Engine.dl && Engine.dl.total) { cls = 'work'; html = `${esc(Engine.dl.label)}: ${fmtMB(Engine.dl.got)} из ${fmtMB(Engine.dl.total)} · один раз`; }
     else if (Engine.dl) { cls = 'work'; html = esc(Engine.dl.label || 'Готовлю голос…'); }
     else if (!Engine.active) { html = 'Нажмите ▶ — голос продолжит с подсвеченного места'; }
-    else if (Engine.voiceReady !== settings.voice) { cls = 'work'; html = 'Запускаю голос…'; }
+    else if (Engine.loadingVoice) { cls = 'work'; html = 'Запускаю голос…'; }
     else if (Player.waiting) { cls = 'work'; html = 'Озвучиваю первые фразы…'; }
     else {
       const a = Engine.aheadSec() / settings.speed;
-      const end = Engine.nextMissing() < 0 && !Engine.busy;
-      if (Engine.busy) { cls = 'work'; html = `Озвучено впрок: ${fmtDur(a)} · готовлю дальше`; }
-      else if (end) { cls = 'ok'; html = `Готово впрок: ${fmtDur(a)} — можно блокировать экран`; }
-      else { html = `Готово впрок: ${fmtDur(a)}`; }
+      if (Engine.busy || Engine.filling) { cls = 'work'; html = `Озвучено впрок: ${fmtDur(a)} · готовлю дальше`; }
+      else { cls = 'ok'; html = `Готово впрок: ${fmtDur(a)} — можно блокировать экран`; }
     }
     st.className = 'status ' + cls; tx.innerHTML = html;
     const rb = $('#retryBtn'); if (rb) rb.onclick = () => { Engine.error = null; Engine.active = true; if (Engine.worker) Engine.worker.postMessage({ type: 'reset' }); Engine.loadingVoice = null; Engine.voiceReady = false; Engine.ensureWorker(); Engine.pump(); };
