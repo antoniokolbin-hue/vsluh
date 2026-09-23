@@ -1151,7 +1151,7 @@ $('#themeSeg').onclick = (e) => {
   document.querySelectorAll('#themeSeg button').forEach((x) => x.classList.toggle('on', x === b));
 };
 // «Проверить голос»: синтез тестовой фразы, цифры и звук — чтобы сразу видеть, работает ли озвучка на этом устройстве
-$('#testVoice').onclick = async () => {
+if ($('#testVoice')) $('#testVoice').onclick = async () => {
   const out = $('#testOut');
   out.textContent = 'Готовлю голос…';
   Player.unlock();
