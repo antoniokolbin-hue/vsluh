@@ -60,7 +60,9 @@ const DB = (() => {
   };
 })();
 
-const settings = Object.assign({ voice: 'denis', speed: 1, font: 19, theme: 'auto', ahead: 7200 }, LS.get('settings', {}));
+const settings = Object.assign({ voice: 'denis', speed: 1, font: 19, theme: 'auto' }, LS.get('settings', {}));
+settings.ahead = 3600;           // запас озвучки впрок: 1 час — хватает и не перегружает телефон
+const AUDIO_VER = 2;             // сменить, чтобы выбросить старую озвучку
 const saveSettings = () => LS.set('settings', settings);
 
 /* ───────────── мелочи ───────────── */
@@ -667,7 +669,7 @@ const Engine = {
       this.dl = null; this.voiceReady = m.voice; this.loadingVoice = null;
       this._vres && this._vres(); this.pump(); UI.status(); UI.voices();
     } else if (m.type === 'audio') {
-      const p = this.pending.get(m.id); this.pending.delete(m.id); p && p.res(m.pcm);
+      const p = this.pending.get(m.id); this.pending.delete(m.id); p && p.res(m);
     } else if (m.type === 'error') {
       if (m.id != null && this.pending.has(m.id)) { const p = this.pending.get(m.id); this.pending.delete(m.id); p.rej(new Error(m.message)); }
       else { this.dl = null; this.error = m.message; this.loadingVoice = null; this._vrej && this._vrej(new Error(m.message)); UI.status(); }
@@ -723,8 +725,14 @@ const Engine = {
       for (let i = s0; i < s1; i++) {
         offs.push(len);
         const para = M.paras[sentPara[i]];
-        const pcm = await this.synth(ttsPieces(M.sents[i], para[2]));
+        const pieces = ttsPieces(M.sents[i], para[2]);
+        const r = await this.synth(pieces);
         if (tok !== this.token) return;
+        const pcm = r.pcm;
+        // защита: текст есть, а звука нет — не сохраняем тишину, показываем причину
+        if (pieces.length && (r.stats.peak < 0.01 || r.stats.nan > r.stats.samples * 0.01)) {
+          throw new Error(`голос выдал тишину (фонем ${r.stats.ids}, отсчётов ${r.stats.samples}, NaN ${r.stats.nan}, пик ${r.stats.peak.toFixed(3)})`);
+        }
         parts.push(pcm); len += pcm.length;
         const pz = Math.round(this.pauseAfter(i) * SR);
         parts.push(new Int16Array(pz)); len += pz;
@@ -742,6 +750,8 @@ const Engine = {
       if (tok !== this.token) return;
       console.error(err);
       this.error = 'Не получилось озвучить: ' + err.message;
+      this.active = false;   // не крутим генерацию вхолостую
+      Player.onError();
     } finally {
       if (tok === this.token) { this.busy = false; setTimeout(() => this.pump(), 0); }
       UI.status();
@@ -814,7 +824,7 @@ const Player = {
     a.addEventListener('timeupdate', () => this.onTime());
     a.addEventListener('ended', () => this.onEnded());
     a.addEventListener('pause', () => { if (this.playing && !this._switching && !a.ended) { this.playing = false; UI.play(); savePos(true); } });
-    a.addEventListener('play', () => { if (!this.playing && this.track) { this.playing = true; UI.play(); } });
+    a.addEventListener('play', () => { if (!this.playing && this.track && a.src === this.track.url) { this.playing = true; UI.play(); } });
     if ('mediaSession' in navigator) {
       const ms = navigator.mediaSession;
       const h = (n, f) => { try { ms.setActionHandler(n, f); } catch (e) {} };
@@ -868,6 +878,20 @@ const Player = {
 
   async playFrom(i, exactOffset) {
     const k = Engine.chunkOf(i);
+    const t = this.track, a = this.audio;
+    // прыжок внутри уже загруженного трека — мгновенно, без пересборки
+    if (exactOffset == null && t && a.src === t.url && i >= t.s0 && i < t.k1 * CH && t.times[i - t.s0] != null) {
+      this.waitFor = null; this.waiting = false;
+      a.currentTime = t.times[i - t.s0];
+      a.playbackRate = settings.speed;
+      a.play().then(() => { this.playing = true; UI.play(); UI.status(); }).catch(() => {});
+      this.playing = true; UI.play(); UI.status();
+      return;
+    }
+    // иначе глушим старый звук сразу, чтобы текст и голос не разъезжались
+    this._switching = true;
+    try { a.pause(); } catch (e) {}
+    this._switching = false;
     this.playing = false;
     this.waiting = true; this.waitFor = { k, i, exactOffset };
     document.body.classList.add('playing');
@@ -875,6 +899,10 @@ const Player = {
     try { await Engine.start(); } catch (e) { this.waiting = false; UI.play(); UI.status(); return; }
     if (Engine.ready.has(k)) this.startTrack(k, i, exactOffset);
     else Engine.pump();
+  },
+
+  onError() {
+    if (this.waiting) { this.waiting = false; this.waitFor = null; UI.play(); }
   },
 
   onChunk(k) {
@@ -937,7 +965,7 @@ const Player = {
   },
 
   onTime() {
-    if (!this.track || !this.playing) return;
+    if (!this.track || !this.playing || this.audio.src !== this.track.url) return;
     const i = this.sentAt(this.audio.currentTime);
     if (i !== pos) {
       setPos(i);
@@ -951,7 +979,7 @@ const Player = {
   },
 
   onEnded() {
-    if (!this.track || !this.playing) return;
+    if (!this.track || !this.playing || this.audio.src !== this.track.url) return;
     const k1 = this.track.k1;
     if (k1 * CH >= M.sents.length) { this.pause(); setPos(M.sents.length - 1); toast('Книга закончилась'); return; }
     if (Engine.ready.has(k1)) { this.waitFor = { k: k1 }; this.startTrack(k1, k1 * CH, 0); }
@@ -1037,7 +1065,7 @@ const UI = {
       else { html = `Готово впрок: ${fmtDur(a)}`; }
     }
     st.className = 'status ' + cls; tx.innerHTML = html;
-    const rb = $('#retryBtn'); if (rb) rb.onclick = () => { Engine.error = null; Engine.loadingVoice = null; Engine.voiceReady = false; Engine.ensureWorker(); Engine.pump(); };
+    const rb = $('#retryBtn'); if (rb) rb.onclick = () => { Engine.error = null; Engine.active = true; Engine.loadingVoice = null; Engine.voiceReady = false; Engine.ensureWorker(); Engine.pump(); };
   },
   posBar() {
     if (!M) return;
@@ -1105,7 +1133,6 @@ $('#setBtn').onclick = async () => {
   UI.voices();
   $('#fontIn').value = settings.font;
   document.querySelectorAll('#themeSeg button').forEach((b) => b.classList.toggle('on', b.dataset.v === settings.theme));
-  document.querySelectorAll('#aheadSeg button').forEach((b) => b.classList.toggle('on', +b.dataset.v === settings.ahead));
   openSheet('#setSheet');
   try {
     const e = await navigator.storage.estimate();
@@ -1123,11 +1150,25 @@ $('#themeSeg').onclick = (e) => {
   settings.theme = b.dataset.v; saveSettings(); applyLook();
   document.querySelectorAll('#themeSeg button').forEach((x) => x.classList.toggle('on', x === b));
 };
-$('#aheadSeg').onclick = (e) => {
-  const b = e.target.closest('[data-v]'); if (!b) return;
-  settings.ahead = +b.dataset.v; saveSettings();
-  document.querySelectorAll('#aheadSeg button').forEach((x) => x.classList.toggle('on', x === b));
-  Engine.pump(); UI.status();
+// «Проверить голос»: синтез тестовой фразы, цифры и звук — чтобы сразу видеть, работает ли озвучка на этом устройстве
+$('#testVoice').onclick = async () => {
+  const out = $('#testOut');
+  out.textContent = 'Готовлю голос…';
+  Player.unlock();
+  try {
+    Engine.active = true;
+    await Engine.ensureWorker();
+    const t0 = performance.now();
+    const r = await Engine.synth(['Проверка связи. Раз, два, три.']);
+    const s = r.stats, dur = r.pcm.length / SR;
+    const ok = s.peak >= 0.01 && s.nan === 0;
+    out.textContent = (ok ? '✓ Звук есть. ' : '✗ Голос выдал тишину. ') +
+      `${dur.toFixed(1)} с за ${((performance.now() - t0) / 1000).toFixed(1)} с · пик ${s.peak.toFixed(2)} · NaN ${s.nan}`;
+    const url = URL.createObjectURL(new Blob([wavHeader(r.pcm.length), r.pcm], { type: 'audio/wav' }));
+    const a = Player.audio; Player.pause();
+    a.src = url; a.playbackRate = 1; a.currentTime = 0;
+    await a.play();
+  } catch (err) { out.textContent = '✗ ' + (err.message || err); }
 };
 $('#clearAudio').onclick = async () => {
   const btn = $('#clearAudio');
@@ -1152,6 +1193,12 @@ function applyLook() {
 /* ───────────── запуск ───────────── */
 applyLook();
 UI.speed();
+// iOS: звук как у плеера — играет при беззвучном режиме и в фоне
+try { if (navigator.audioSession) navigator.audioSession.type = 'playback'; } catch (e) {}
+// выбрасываем озвучку старых версий (могла быть сохранена тишина)
+if (LS.get('audioVer', 1) !== AUDIO_VER) {
+  Promise.all([DB.delPrefix('pcm', ''), DB.delPrefix('meta', '')]).catch(() => {}).then(() => LS.set('audioVer', AUDIO_VER));
+}
 Player.init();
 loadLibrary();
 if ('serviceWorker' in navigator && location.protocol === 'https:') {
