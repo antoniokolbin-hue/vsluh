@@ -4,7 +4,7 @@
 const $ = (s) => document.querySelector(s);
 const SR = 22050;               // частота голоса Piper
 const CH = 4;                   // предложений в одном аудио-куске
-const MAX_TRACK = 45 * 60;      // максимум секунд в одном «треке» для фона
+const MAX_TRACK = 20 * 60;      // максимум секунд в одном «треке» (дальше трек сменяется сам)
 const VOICES = [
   { id: 'denis', name: 'Денис', desc: 'мужской' },
   { id: 'dmitri', name: 'Дмитрий', desc: 'мужской' },
@@ -62,7 +62,7 @@ const DB = (() => {
 
 const settings = Object.assign({ voice: 'denis', speed: 1, font: 19, theme: 'auto' }, LS.get('settings', {}));
 settings.ahead = 3600;           // запас озвучки впрок: 1 час — хватает и не перегружает телефон
-const AUDIO_VER = 2;             // сменить, чтобы выбросить старую озвучку
+const AUDIO_VER = 3;             // сменить, чтобы выбросить старую озвучку
 const saveSettings = () => LS.set('settings', settings);
 
 /* ───────────── мелочи ───────────── */
@@ -355,14 +355,14 @@ function ttsPieces(text, kind) {
   if (!/[\p{L}\p{N}]/u.test(t)) return [];
   if (!/[.!?…:;]$/.test(t)) t += '.';
   const out = [];
-  while (t.length > 230) {
+  while (t.length > 180) {
     let cut = -1;
     for (const re of [/[;:]\s/g, /,\s/g, /\s/g]) {
       re.lastIndex = 0; let m;
-      while ((m = re.exec(t)) && m.index < 230) if (m.index > 60) cut = m.index + 1;
+      while ((m = re.exec(t)) && m.index < 180) if (m.index > 50) cut = m.index + 1;
       if (cut > 0) break;
     }
-    if (cut < 0) cut = 230;
+    if (cut < 0) cut = 180;
     out.push(t.slice(0, cut).trim());
     t = t.slice(cut).trim();
   }
@@ -506,6 +506,7 @@ async function openBook(id) {
   });
   pos = Math.min(LS.get('pos:' + id, meta.pos || 0), M.sents.length - 1);
   book.opened = Date.now(); DB.put('books', book).catch(() => {});
+  LS.set('lastBook', id);   // если iOS перезапустит приложение — вернёмся сюда же
   $('#libView').hidden = true; $('#readView').hidden = false;
   chapShown = -1;
   renderChapter(sentChap[pos]);
@@ -518,6 +519,7 @@ async function openBook(id) {
 
 function closeBook() {
   savePos(true);
+  LS.del('lastBook');
   $('#readView').hidden = true; $('#libView').hidden = false;
   renderLibrary();
   window.scrollTo(0, 0);
@@ -742,7 +744,7 @@ const Engine = {
       const all = new Int16Array(len);
       let o = 0; for (const p of parts) { all.set(p, o); o += p.length; }
       const key = bid + '|' + voice + '|' + pad(k);
-      await DB.put('pcm', all.buffer, key);
+      await DB.put('pcm', new Blob([all], { type: 'application/octet-stream' }), key);   // Blob живёт на диске, не в памяти
       await DB.put('meta', { len, offs }, key);
       if (tok !== this.token) return;
       this.ready.set(k, { len, offs });
@@ -919,6 +921,7 @@ const Player = {
     const ks = []; let tot = 0;
     for (let k = k0; Engine.ready.has(k) && tot < MAX_TRACK * SR; k++) { ks.push(k); tot += Engine.ready.get(k).len; }
     if (!ks.length) return null;
+    // куски приходят как Blob-ссылки на файлы — трек собирается без копирования звука в память
     const bufs = await Promise.all(ks.map((k) => DB.get('pcm', Engine.key(k))));
     let n = bufs.findIndex((b) => !b);
     if (n === 0) { Engine.ready.delete(k0); return null; }
@@ -1202,7 +1205,10 @@ if (LS.get('audioVer', 1) !== AUDIO_VER) {
   Promise.all([DB.delPrefix('pcm', ''), DB.delPrefix('meta', '')]).catch(() => {}).then(() => LS.set('audioVer', AUDIO_VER));
 }
 Player.init();
-loadLibrary();
+loadLibrary().then(() => {
+  const last = LS.get('lastBook', null);
+  if (last && books.some((b) => b.id === last)) openBook(last);
+});
 if ('serviceWorker' in navigator && location.protocol === 'https:') {
   navigator.serviceWorker.register('sw.js').catch(() => {});
 }
