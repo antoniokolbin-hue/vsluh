@@ -1,0 +1,667 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Вслух · стенд голосов</title>
+<meta name="theme-color" content="#FAF9F6" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#111215" media="(prefers-color-scheme: dark)">
+<link rel="icon" href="icon-192.png">
+<style>
+:root{
+  --bg:#FAF9F6; --paper:#FFFFFF; --ink:#18191D; --soft:#4A4D55; --muted:#8B8E97; --line:#E6E4DF;
+  --accent:#2946C8; --accent-ink:#FFFFFF; --hl:rgba(41,70,200,.10); --ok:#2E8B57; --err:#C8372D;
+  --ui:-apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, sans-serif;
+  --read:"Iowan Old Style", "New York", ui-serif, Georgia, serif;
+  color-scheme:light;
+}
+@media (prefers-color-scheme: dark){
+  :root{ --bg:#111215; --paper:#18191D; --ink:#DAD8D2; --soft:#B5B3AE; --muted:#80838C; --line:#26282E;
+    --accent:#8EA5FF; --accent-ink:#0E1020; --hl:rgba(142,165,255,.14); --ok:#5CC48A; --err:#FF7A6E; color-scheme:dark; }
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.45 var(--ui);-webkit-text-size-adjust:100%}
+button,select,textarea{font:inherit;color:inherit}
+button{background:none;border:0;padding:0;cursor:pointer}
+[hidden]{display:none!important}
+.wrap{max-width:640px;margin:0 auto;padding:calc(env(safe-area-inset-top,0px) + 28px) 18px calc(env(safe-area-inset-bottom,0px) + 60px)}
+.kicker{margin:0 0 8px;font:600 11.5px var(--ui);letter-spacing:.14em;text-transform:uppercase;color:var(--muted)}
+h1{margin:0 0 10px;font:600 34px/1.05 var(--read);letter-spacing:-.01em}
+h2{margin:34px 0 12px;font:600 11.5px var(--ui);letter-spacing:.12em;text-transform:uppercase;color:var(--muted)}
+.lead{margin:0 0 8px;color:var(--soft)}
+.dev{margin:0;color:var(--muted);font-size:12.5px}
+.note{color:var(--muted);font-size:13px;margin:8px 0 0}
+.banner{margin-top:16px;padding:12px 14px;border-radius:14px;border:1px solid var(--err);color:var(--ink);background:var(--paper);font-size:14px}
+.banner b{color:var(--err)}
+
+.eng{background:var(--paper);border:1px solid var(--line);border-radius:16px;padding:14px;margin-bottom:10px}
+.eng.on{border-color:var(--accent);box-shadow:inset 0 0 0 1px var(--accent)}
+.eng-head{display:flex;align-items:baseline;justify-content:space-between;gap:10px}
+.eng-head b{font-size:16.5px}
+.sz{color:var(--muted);font-size:12.5px;white-space:nowrap}
+.eng-sub{margin:3px 0 10px;color:var(--soft);font-size:13.5px}
+.opts{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.opts label{display:flex;flex-direction:column;gap:3px;font-size:11.5px;color:var(--muted);letter-spacing:.02em}
+.opts select{appearance:none;-webkit-appearance:none;height:36px;padding:0 28px 0 10px;border-radius:10px;border:1px solid var(--line);background:var(--bg) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%238B8E97' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") no-repeat right 11px center;font-size:14px;color:var(--ink);text-overflow:ellipsis}
+.eng-foot{display:flex;align-items:center;gap:12px;margin-top:12px}
+.run{height:38px;padding:0 18px;border-radius:19px;background:var(--accent);color:var(--accent-ink);font-weight:600}
+.run:disabled{opacity:.35}
+.eng-state{color:var(--muted);font-size:13px;line-height:1.3}
+.eng-state.ok{color:var(--ok)}.eng-state.err{color:var(--err)}
+
+.runbox{position:sticky;top:calc(env(safe-area-inset-top,0px) + 8px);z-index:5;margin:6px 0 12px;padding:12px 14px;border-radius:14px;background:var(--ink);color:var(--bg);font-size:13.5px;box-shadow:0 10px 30px rgba(0,0,0,.18)}
+.runbox .bar{height:3px;border-radius:2px;background:rgba(127,127,127,.35);margin-top:8px;overflow:hidden}
+.runbox .bar i{display:block;height:100%;width:0;background:var(--bg);transition:width .2s}
+.runbox .row{display:flex;justify-content:space-between;gap:10px;align-items:center}
+.runbox button{color:var(--bg);opacity:.75;font-weight:600}
+
+.custom{display:block;color:var(--soft);font-size:13.5px;margin-bottom:12px}
+.custom textarea{display:block;width:100%;margin-top:6px;padding:10px 12px;border-radius:12px;border:1px solid var(--line);background:var(--paper);font:16px/1.45 var(--read);resize:vertical}
+.grp-title{margin:20px 0 8px;font:600 13px var(--ui);color:var(--soft)}
+.ph{padding:12px 0;border-top:1px solid var(--line)}
+.ph-hint{margin:0 0 3px;color:var(--muted);font-size:12px;letter-spacing:.02em}
+.ph-text{margin:0 0 9px;font:17px/1.45 var(--read)}
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{display:inline-flex;flex-direction:column;align-items:flex-start;min-width:88px;padding:6px 11px;border-radius:12px;border:1px solid var(--line);background:var(--paper);text-align:left;font-size:13px;font-weight:600}
+.chip small{font-weight:400;font-size:11.5px;color:var(--muted);font-variant-numeric:tabular-nums}
+.chip:disabled{opacity:.4}
+.chip.err small{color:var(--err)}
+.chip.play{border-color:var(--accent);background:var(--hl)}
+.legend{color:var(--muted);font-size:12.5px;margin:0 0 4px}
+
+.btn{height:42px;padding:0 18px;border-radius:21px;background:var(--ink);color:var(--bg);font-weight:600}
+.btn.ghost{background:none;color:var(--soft);border:1px solid var(--line)}
+.btn:disabled{opacity:.35}
+pre.report{white-space:pre-wrap;word-break:break-word;background:var(--paper);border:1px solid var(--line);border-radius:14px;padding:12px 14px;font:12.5px/1.5 ui-monospace, Menlo, monospace;color:var(--soft);margin:12px 0}
+.row2{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+table.sum{width:100%;border-collapse:collapse;font-size:14px;margin-top:10px}
+table.sum td{padding:7px 4px;border-top:1px solid var(--line)}
+table.sum td:last-child{text-align:right;font-variant-numeric:tabular-nums;font-weight:600}
+
+/* слепой тест */
+.scrim{position:fixed;inset:0;z-index:20;background:rgba(10,12,18,.4)}
+.sheet{position:fixed;left:0;right:0;bottom:0;z-index:21;max-width:640px;margin:0 auto;background:var(--paper);border-radius:22px 22px 0 0;padding:18px 18px calc(env(safe-area-inset-bottom,0px) + 18px);box-shadow:0 -10px 40px rgba(0,0,0,.25)}
+.sheet-top{display:flex;justify-content:space-between;align-items:center;color:var(--muted);font-size:13px}
+.sheet-top button{color:var(--accent);font-weight:600}
+.trial-text{font:18px/1.45 var(--read);margin:12px 0 4px}
+.abc{display:flex;gap:10px;margin:16px 0 8px}
+.abc button{flex:1;height:58px;border-radius:16px;border:1px solid var(--line);background:var(--bg);font:600 20px var(--ui)}
+.abc button.play{border-color:var(--accent);background:var(--hl)}
+.vote{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+.vote button{flex:1;min-width:64px;height:42px;border-radius:12px;background:var(--accent);color:var(--accent-ink);font-weight:600}
+.vote button.tie{background:none;color:var(--soft);border:1px solid var(--line);flex-basis:100%}
+.ask{margin:14px 0 0;color:var(--soft);font-size:13.5px}
+</style>
+</head>
+<body>
+<main class="wrap">
+  <header>
+    <p class="kicker">Вслух · лаборатория</p>
+    <h1>Стенд голосов</h1>
+    <p class="lead">Движки по очереди читают одни и те же коварные фразы прямо на этом телефоне. Прогоните каждый, потом сравните на слух — лучше вслепую.</p>
+    <p class="dev" id="dev"></p>
+  </header>
+  <div class="banner" id="banner" hidden></div>
+
+  <h2>1 · Движки</h2>
+  <div class="runbox" id="runbox" hidden>
+    <div class="row"><span id="runText">—</span><button id="stopBtn">Стоп</button></div>
+    <div class="bar"><i id="runBar"></i></div>
+  </div>
+  <div id="engines"></div>
+  <p class="note">Первый прогон каждого движка скачивает модель — нужен Wi-Fi. Дальше всё из кэша. Экран не гаснет, пока идёт прогон; не уходите со страницы.</p>
+
+  <h2>2 · Фразы</h2>
+  <label class="custom">Своя фраза — вставьте абзац из книги, он войдёт в каждый следующий прогон
+    <textarea id="custom" rows="3" placeholder="Например, первый абзац романа, который сейчас читаете"></textarea>
+  </label>
+  <p class="legend">На кнопке: длина звука и скорость. «×2» — движок готовит вдвое быстрее, чем звучит; ниже «×1» для чтения вслух не годится. Громкость у всех выровнена.</p>
+  <div id="phrases"></div>
+
+  <h2>3 · Слепой тест</h2>
+  <p class="lead">Варианты одной фразы под буквами А, Б, В в случайном порядке. Слушаете, выбираете лучший, кто есть кто — только в конце.</p>
+  <div class="row2"><button class="btn" id="blindBtn">Начать слепой тест</button><span class="note" id="blindHint" style="margin:0"></span></div>
+  <div id="blindOut"></div>
+
+  <h2>4 · Отчёт</h2>
+  <p class="lead">Скопируйте и пришлите в чат — по нему решаем, какой движок встраивать.</p>
+  <div class="row2"><button class="btn" id="copyBtn">Скопировать отчёт</button><span class="note" id="copyOk" style="margin:0"></span></div>
+  <pre class="report" id="report"></pre>
+  <div class="row2"><button class="btn ghost" id="clearBtn">Удалить скачанные модели</button></div>
+  <p class="note" id="storage"></p>
+</main>
+
+<div class="scrim" id="scrim" hidden></div>
+<div class="sheet" id="sheet" hidden role="dialog" aria-label="Слепой тест"></div>
+
+<script type="module">
+'use strict';
+const $ = (s) => document.querySelector(s);
+const LS = {
+  get(k, d) { try { const v = localStorage.getItem('vsluh:' + k); return v == null ? d : JSON.parse(v); } catch (e) { return d; } },
+  set(k, v) { try { localStorage.setItem('vsluh:' + k, JSON.stringify(v)); } catch (e) {} },
+  del(k) { try { localStorage.removeItem('vsluh:' + k); } catch (e) {} },
+};
+const abs = (u) => new URL(u, location.href).href;
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const n1 = (x) => (Math.round(x * 10) / 10).toLocaleString('ru-RU', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+const mb = (b) => Math.round(b / 1048576);
+// ?local — проверка без интернета: модели и движок из папки _t рядом со страницей
+const LOCAL = new URLSearchParams(location.search).has('local');
+const CFG = LOCAL
+  ? { ortCdn: abs('_t/ort/'), supertonic: abs('_t/st/'), kokoroRu: abs('_t/kru/'), kokoroEn: abs('_t/ken/') }
+  : {
+      ortCdn: 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.30.0/dist/',
+      supertonic: 'https://huggingface.co/askurios8/supertonic-3-int8/resolve/main/',
+      kokoroRu: 'https://huggingface.co/da1353/kokoro-ru/resolve/main/',
+      kokoroEn: 'https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX/resolve/main/',
+    };
+
+/* ───────────── движки и фразы ───────────── */
+const ENGINES = {
+  piper: {
+    name: 'Piper', worker: 'tts-worker.js', langs: ['ru', 'en', 'mix'],
+    sub: 'Сейчас в приложении. Точка отсчёта — английский тоже читает русским голосом, как сейчас.',
+    size: '≈ 63 МБ голос',
+    opts: { voice: [['denis', 'Денис'], ['dmitri', 'Дмитрий'], ['irina', 'Ирина'], ['ruslan', 'Руслан']] },
+  },
+  supertonic: {
+    name: 'Supertonic 3', worker: 'lab-worker.js', engine: 'supertonic', langs: ['ru', 'en', 'mix'],
+    sub: 'Одна модель на русский и английский, без eSpeak. Больше шагов — чище звук, но медленнее.',
+    size: '≈ 105 МБ все голоса',
+    opts: {
+      voice: [['M1', 'Муж. 1'], ['M2', 'Муж. 2'], ['M3', 'Муж. 3'], ['M4', 'Муж. 4'], ['M5', 'Муж. 5'], ['F1', 'Жен. 1'], ['F2', 'Жен. 2'], ['F3', 'Жен. 3'], ['F4', 'Жен. 4'], ['F5', 'Жен. 5']],
+      steps: [['5', '5 шагов'], ['8', '8 шагов'], ['16', '16 шагов']],
+      mixed: [['tags', 'латиница: теги'], ['split', 'латиница: склейка']],
+      backend: [['wasm', 'процессор'], ['webgpu', 'видеочип']],
+    },
+    def: { steps: '8' },
+  },
+  kokoroRu: {
+    name: 'Kokoro RU', worker: 'lab-worker.js', engine: 'kokoro', model: 'ru', langs: ['ru', 'mix'],
+    sub: 'Русский порт Kokoro. Ударения пока от eSpeak — как у Piper.',
+    size: '≈ 138 МБ (Дима — ещё 138)',
+    opts: {
+      voice: [['sveta', 'Света'], ['masha', 'Маша'], ['dima', 'Дима']],
+      backend: [['wasm', 'процессор'], ['webgpu', 'видеочип (+164 МБ)']],
+    },
+  },
+  kokoroEn: {
+    name: 'Kokoro EN', worker: 'lab-worker.js', engine: 'kokoro', model: 'en', langs: ['en'],
+    sub: 'Оригинальный Kokoro — эталон компактного английского.',
+    size: '≈ 92 МБ',
+    opts: {
+      voice: [['af_heart', 'Heart · US жен.'], ['af_bella', 'Bella · US жен.'], ['am_michael', 'Michael · US муж.'], ['bf_emma', 'Emma · UK жен.'], ['bm_george', 'George · UK муж.']],
+      backend: [['wasm', 'процессор'], ['webgpu', 'видеочип (+163 МБ)']],
+    },
+  },
+};
+const OPT_LABEL = { voice: 'Голос', steps: 'Качество', mixed: 'Смешанный текст', backend: 'Считает' };
+
+const PHRASES = [
+  { id: 'r1', lang: 'ru', hint: 'за́мок или замо́к', text: 'Старый замок на двери замка давно заржавел.' },
+  { id: 'r2', lang: 'ru', hint: 'буква ё не напечатана', text: 'Он все понял, но ее письма так и не нашел.' },
+  { id: 'r3', lang: 'ru', hint: 'му́ка или мука́', text: 'Это была настоящая мука: мука кончилась, и блинов не будет.' },
+  { id: 'r4', lang: 'ru', hint: 'числа и падежи', text: 'В 1984 году ему было 23 года, а к 5 утра он прошёл 12 километров.' },
+  { id: 'r5', lang: 'ru', hint: 'вопрос', text: 'Ты правда думаешь, что он вернётся?' },
+  { id: 'r6', lang: 'ru', hint: 'диалог, длинная фраза', text: '— Не надо, — тихо сказала она, глядя в окно, где медленно гас серый московский вечер.' },
+  { id: 'r7', lang: 'ru', hint: 'коварные ударения', text: 'Она звонит маме: торты в духовке, шарфы на полке, а мы будем через квартал.' },
+  { id: 'r8', lang: 'ru', hint: 'сокращения и римские цифры', text: 'Т. е. все, что было до XIX в., он считал древностью и т. д.' },
+  { id: 'e1', lang: 'en', hint: 'литературный английский', text: 'The old lighthouse keeper had not spoken to anyone in years, yet every evening he lit the lamp as if someone were waiting.' },
+  { id: 'e2', lang: 'en', hint: 'вопрос, дата, год', text: "Did you read the email I sent on March 3rd? It's about the 2026 budget." },
+  { id: 'e3', lang: 'en', hint: 'диалог шёпотом', text: '"I\'m not sure," she whispered, "but I think we\'re being followed."' },
+  { id: 'm1', lang: 'mix', hint: 'латиница в русском тексте', text: 'Он открыл MacBook, запустил Google Chrome и написал в Telegram.' },
+  { id: 'm2', lang: 'mix', hint: 'английские названия', text: 'Её любимая песня — Here Comes the Sun, а любимый фильм — Lost in Translation.' },
+];
+const GROUPS = [['ru', 'Русский'], ['en', 'Английский'], ['mix', 'Русский с латиницей'], ['own', 'Своя фраза']];
+
+function customPhrase() {
+  const t = $('#custom').value.trim();
+  if (!t) return null;
+  const lat = (t.match(/[A-Za-z]/g) || []).length, cyr = (t.match(/[А-Яа-яЁё]/g) || []).length;
+  return { id: 'own', lang: cyr >= lat ? (lat ? 'mix' : 'ru') : 'en', group: 'own', hint: 'ваш текст', text: t };
+}
+const allPhrases = () => { const c = customPhrase(); return c ? [...PHRASES, c] : PHRASES; };
+const phrasesFor = (k) => allPhrases().filter((p) => ENGINES[k].langs.includes(p.lang));
+
+/* ───────────── настройки и состояние ───────────── */
+const S = LS.get('lab:settings', {});
+for (const [k, E] of Object.entries(ENGINES)) {
+  S[k] = Object.assign({}, ...Object.entries(E.opts).map(([o, list]) => ({ [o]: (E.def && E.def[o]) || list[0][0] })), S[k] || {});
+}
+const saveSettings = () => LS.set('lab:settings', S);
+const results = {};                           // звук этого сеанса
+const runs = LS.get('lab:runs', {});          // цифры прогонов — переживают перезагрузку
+let blind = LS.get('lab:blind', null);
+let busy = null, seq = 0;
+
+/* ───────────── устройство ───────────── */
+const ua = navigator.userAgent;
+const ios = (ua.match(/OS (\d+)_(\d+)/) || []).slice(1).join('.');
+const dev = { ua, ios, webgpu: !!navigator.gpu, gpu: '' };
+async function probeGpu() {
+  if (!navigator.gpu) return;
+  try { const a = await navigator.gpu.requestAdapter(); dev.gpu = a ? ((a.info && (a.info.vendor || a.info.architecture)) || 'есть') : 'адаптер не выдан'; }
+  catch (e) { dev.gpu = 'ошибка: ' + e.message; }
+}
+function renderDev() {
+  const where = /iPhone/.test(ua) ? 'iPhone' : /iPad/.test(ua) ? 'iPad' : /Mac/.test(ua) ? 'Mac' : 'устройство';
+  $('#dev').textContent = `${where}${ios ? ' · iOS ' + ios : ''} · WebGPU: ${dev.webgpu ? (dev.gpu || 'есть') : 'нет'}${LOCAL ? ' · локальная проверка' : ''}`;
+}
+
+/* ───────────── обрывы ───────────── */
+const drops = LS.get('lab:drops', []);
+function checkDrop() {
+  const a = LS.get('lab:alive', null);
+  if (!a) return;
+  LS.del('lab:alive');
+  drops.push(a);
+  while (drops.length > 6) drops.shift();
+  LS.set('lab:drops', drops);
+  const why = a.hidden ? 'Страница уходила в фон — iOS мог её выгрузить.' : 'Страница перезагрузилась сама — похоже на нехватку памяти или сбой движка. Это важный результат, он попал в отчёт.';
+  $('#banner').innerHTML = `<b>Прогон оборвался:</b> ${esc(a.label)}, ${esc(a.phase)}${a.i ? ' ' + a.i + '/' + a.n : ''}. ${why}`;
+  $('#banner').hidden = false;
+}
+addEventListener('pagehide', () => { if (busy) { const a = LS.get('lab:alive', null); if (a) LS.set('lab:alive', { ...a, hidden: true }); } });
+document.addEventListener('visibilitychange', () => { if (document.hidden && busy) busy.bg = true; });
+
+/* ───────────── текст для Piper — как в приложении ───────────── */
+const ROMAN = { I: 1, V: 5, X: 10, L: 50, C: 100 };
+function roman(s) { let n = 0; for (let i = 0; i < s.length; i++) { const a = ROMAN[s[i]], b = ROMAN[s[i + 1]] || 0; n += a < b ? -a : a; } return n; }
+function ttsPieces(text, kind) {
+  let t = text
+    .replace(/\[[^\]]{0,6}\]|\{[^}]{0,6}\}/g, '')
+    .replace(/[«»“”„"]/g, '')
+    .replace(/…/g, '...')
+    .replace(/(^|\s)[—–-](\s|$)/g, '$1, $2')
+    .replace(/^[,\s]+/, '')
+    .replace(/\s+,/g, ',')
+    .replace(/,(\s*,)+/g, ',')
+    .replace(/\*+/g, '')
+    .replace(/№/g, ' номер ').replace(/§/g, ' параграф ')
+    .replace(/[^\p{L}\p{N}\s.,!?;:()%'\-]/gu, ' ')
+    .replace(/\s+/g, ' ').trim();
+  if (kind === 'h' || kind === 's') t = t.replace(/\b([IVXLC]{1,7})\b/g, (m) => String(roman(m)));
+  if (!/[\p{L}\p{N}]/u.test(t)) return [];
+  if (!/[.!?…:;]$/.test(t)) t += '.';
+  const out = [];
+  while (t.length > 180) {
+    let cut = -1;
+    for (const re of [/[;:]\s/g, /,\s/g, /\s/g]) {
+      re.lastIndex = 0; let m;
+      while ((m = re.exec(t)) && m.index < 180) if (m.index > 50) cut = m.index + 1;
+      if (cut > 0) break;
+    }
+    if (cut < 0) cut = 180;
+    out.push(t.slice(0, cut).trim());
+    t = t.slice(cut).trim();
+  }
+  if (t) out.push(t);
+  return out;
+}
+
+/* ───────────── звук ───────────── */
+function wavHeader(n, sr) {
+  const b = new ArrayBuffer(44), v = new DataView(b);
+  const w = (o, s) => { for (let i = 0; i < s.length; i++) v.setUint8(o + i, s.charCodeAt(i)); };
+  w(0, 'RIFF'); v.setUint32(4, 36 + n * 2, true); w(8, 'WAVE'); w(12, 'fmt ');
+  v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+  v.setUint32(24, sr, true); v.setUint32(28, sr * 2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true);
+  w(36, 'data'); v.setUint32(40, n * 2, true);
+  return b;
+}
+// громкость выравниваем, чтобы в сравнении не побеждал тот, кто громче
+function toWavUrl(f32, sr) {
+  let sum = 0, peak = 0;
+  for (let i = 0; i < f32.length; i++) { const x = f32[i]; if (x === x) { sum += x * x; const a = x < 0 ? -x : x; if (a > peak) peak = a; } }
+  const rms = Math.sqrt(sum / Math.max(1, f32.length));
+  const g = rms > 1e-5 ? Math.min(0.08 / rms, 0.95 / Math.max(peak, 1e-5), 12) : 1;
+  const pcm = new Int16Array(f32.length);
+  for (let i = 0; i < f32.length; i++) {
+    let s = f32[i] * g; if (s !== s) s = 0;
+    s = s < -1 ? -1 : s > 1 ? 1 : s;
+    pcm[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+  }
+  return URL.createObjectURL(new Blob([wavHeader(pcm.length, sr), pcm], { type: 'audio/wav' }));
+}
+const audio = new Audio();
+audio.preload = 'auto';
+let playingBtn = null;
+function play(url, btn) {
+  if (playingBtn === btn && !audio.paused) { audio.pause(); setPlaying(null); return; }
+  audio.src = url;
+  audio.play().then(() => setPlaying(btn)).catch(() => toastNote('Нажмите ещё раз — iOS не дал включить звук'));
+}
+function setPlaying(btn) { if (playingBtn) playingBtn.classList.remove('play'); playingBtn = btn; if (btn) btn.classList.add('play'); }
+audio.addEventListener('ended', () => setPlaying(null));
+audio.addEventListener('pause', () => setPlaying(null));
+function toastNote(t) { $('#copyOk').textContent = t; }
+
+/* ───────────── форматирование ───────────── */
+const optName = (k, o) => { const l = ENGINES[k].opts[o]; const v = S[k][o]; const f = l && l.find((x) => x[0] === v); return f ? f[1] : v; };
+
+/* ───────────── интерфейс движков ───────────── */
+function renderEngines() {
+  $('#engines').innerHTML = Object.entries(ENGINES).map(([k, E]) => `
+    <div class="eng${busy && busy.k === k ? ' on' : ''}" data-k="${k}">
+      <div class="eng-head"><b>${E.name}</b><span class="sz">${E.size}</span></div>
+      <p class="eng-sub">${E.sub}</p>
+      <div class="opts">${Object.entries(E.opts).map(([o, list]) => `
+        <label>${OPT_LABEL[o]}<select data-o="${o}" ${busy ? 'disabled' : ''}>${list.map(([v, t]) => `<option value="${v}"${S[k][o] === v ? ' selected' : ''}>${t}</option>`).join('')}</select></label>`).join('')}
+      </div>
+      <div class="eng-foot"><button class="run" data-run="${k}" ${busy ? 'disabled' : ''}>Прогнать</button><span class="eng-state ${stateClass(k)}">${stateText(k)}</span></div>
+    </div>`).join('');
+}
+function stateClass(k) { const r = runs[k]; return !r ? '' : (r.error || r.partial) ? 'err' : 'ok'; }
+function stateText(k) {
+  if (busy && busy.k === k) return 'идёт прогон…';
+  const r = runs[k];
+  if (!r) return 'ещё не запускался';
+  const head = r.partial ? `оборвался на фразе ${r.at || 0} из ${r.total}` : r.error ? 'ошибка: ' + esc(r.error) : `${r.n} фраз · ×${n1(r.speed)}`;
+  return `${head}<br><small>${esc(r.when)}${results[k] ? '' : ' · звук в прошлом сеансе — прогоните снова'}</small>`;
+}
+$('#engines').addEventListener('change', (e) => {
+  const sel = e.target.closest('select'); if (!sel) return;
+  const k = sel.closest('.eng').dataset.k;
+  S[k][sel.dataset.o] = sel.value; saveSettings();
+});
+$('#engines').addEventListener('click', (e) => { const b = e.target.closest('[data-run]'); if (b) run(b.dataset.run); });
+
+/* ───────────── интерфейс фраз ───────────── */
+function renderPhrases() {
+  const list = allPhrases();
+  let html = '';
+  for (const [g, title] of GROUPS) {
+    const ps = list.filter((p) => (p.group || p.lang) === g);
+    if (!ps.length) continue;
+    html += `<p class="grp-title">${title}</p>`;
+    for (const p of ps) {
+      const ks = Object.keys(ENGINES).filter((k) => ENGINES[k].langs.includes(p.lang));
+      html += `<div class="ph" data-id="${p.id}"><p class="ph-hint">${esc(p.hint)}</p><p class="ph-text">${esc(p.text)}</p>
+        <div class="chips">${ks.map((k) => chipHtml(k, p.id)).join('')}</div></div>`;
+    }
+  }
+  $('#phrases').innerHTML = html;
+}
+function chipHtml(k, id) {
+  const it = results[k] && results[k].items[id];
+  if (!it) return `<button class="chip" data-k="${k}" data-id="${id}" disabled>${ENGINES[k].name}<small>—</small></button>`;
+  if (it.err) return `<button class="chip err" data-k="${k}" data-id="${id}" disabled>${ENGINES[k].name}<small>ошибка</small></button>`;
+  return `<button class="chip" data-k="${k}" data-id="${id}">${ENGINES[k].name}<small>${n1(it.dur)} с · ×${n1(it.dur / (it.ms / 1000))}</small></button>`;
+}
+function updateChip(k, id) {
+  const old = document.querySelector(`.chip[data-k="${k}"][data-id="${id}"]`);
+  if (old) old.outerHTML = chipHtml(k, id);
+}
+$('#phrases').addEventListener('click', (e) => {
+  const b = e.target.closest('.chip'); if (!b || b.disabled) return;
+  const it = results[b.dataset.k].items[b.dataset.id];
+  if (it && it.url) play(it.url, b);
+});
+let customT = null;
+$('#custom').addEventListener('input', () => { clearTimeout(customT); customT = setTimeout(() => { LS.set('lab:custom', $('#custom').value); renderPhrases(); }, 400); });
+
+/* ───────────── прогон ───────────── */
+function rpcFor(worker, onMsg) {
+  const pend = new Map();
+  let initP = null;
+  const failAll = (err) => { if (initP) { initP.rej(err); initP = null; } for (const p of pend.values()) p.rej(err); pend.clear(); };
+  worker.onmessage = (e) => {
+    const m = e.data;
+    if (m.type === 'progress' || m.type === 'status') return onMsg(m);
+    if (m.type === 'ready') { if (initP) { initP.res(m); initP = null; } return; }
+    if (m.type === 'audio') { const p = pend.get(m.id); if (p) { pend.delete(m.id); p.res(m); } return; }
+    if (m.type === 'error') {
+      const p = m.id != null && pend.get(m.id);
+      if (p) { pend.delete(m.id); p.rej(new Error(m.message)); }
+      else if (initP) { initP.rej(new Error(m.message)); initP = null; }
+    }
+  };
+  worker.onerror = (e) => { if (e.preventDefault) e.preventDefault(); failAll(new Error('движок упал целиком' + (e.message ? ': ' + e.message : ''))); };
+  return {
+    init: (msg) => new Promise((res, rej) => { initP = { res, rej }; worker.postMessage(msg); }),
+    call: (msg, ms) => new Promise((res, rej) => {
+      pend.set(msg.id, { res, rej });
+      worker.postMessage(msg);
+      setTimeout(() => { if (pend.has(msg.id)) { pend.delete(msg.id); rej(new Error('нет ответа ' + Math.round(ms / 1000) + ' с')); } }, ms);
+    }),
+    failAll,
+  };
+}
+
+function runText(t, frac) { $('#runText').textContent = t; if (frac != null) $('#runBar').style.width = Math.round(Math.min(1, frac) * 100) + '%'; }
+
+async function run(k) {
+  if (busy) return;
+  const E = ENGINES[k], o = { ...S[k] };
+  const list = phrasesFor(k);
+  busy = { k, stop: false, bg: false };
+  const alive = (phase, i) => LS.set('lab:alive', { k, label: E.name + ' · ' + optName(k, 'voice'), phase, i, n: list.length, t: Date.now() });
+  alive('загрузка', 0);
+  let wake = null;
+  try { if ('wakeLock' in navigator) wake = await navigator.wakeLock.request('screen'); } catch (e) {}
+  if (results[k]) for (const it of Object.values(results[k].items)) if (it.url) URL.revokeObjectURL(it.url);
+  results[k] = { items: {} };
+  renderEngines(); renderPhrases();
+  $('#runbox').hidden = false;
+  runText(E.name + ': запуск…', 0);
+
+  const worker = new Worker(E.worker, { type: 'module' });
+  busy.worker = worker;
+  const rpc = rpcFor(worker, (m) => {
+    if (m.type === 'progress') runText(`${E.name}: ${m.label} — ${mb(m.got)} из ${mb(m.total)} МБ`, m.total ? m.got / m.total : 0);
+    else runText(`${E.name}: ${m.text}`);
+  });
+  busy.rpc = rpc;
+  const R = { when: new Date().toLocaleString('ru-RU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }), opts: o, n: 0, total: list.length, at: 0, audio: 0, synth: 0, first: null, worst: null, errors: 0, notes: {} };
+  saveRun(k, R, true);
+  const t0 = performance.now();
+  try {
+    const ready = await rpc.init(k === 'piper'
+      ? { type: 'init', voice: o.voice }
+      : { type: 'init', engine: E.engine, cfg: CFG, opts: { ...o, model: E.model, steps: +o.steps || undefined } });
+    R.loadMs = performance.now() - t0;
+    R.info = ready.info || null;
+    saveRun(k, R, true);
+    let i = 0;
+    for (const p of list) {
+      if (busy.stop) { R.stopped = true; break; }
+      i++;
+      alive('фраза', i);
+      R.at = i; saveRun(k, R, true);
+      runText(`${E.name}: фраза ${i} из ${list.length}`, (i - 1) / list.length);
+      const id = ++seq;
+      const msg = k === 'piper' ? { type: 'synth', id, pieces: ttsPieces(p.text, 'p') } : { type: 'synth', id, text: p.text, lang: p.lang === 'en' ? 'en' : 'ru' };
+      let r;
+      try { r = await rpc.call(msg, 240000); }
+      catch (e) {
+        results[k].items[p.id] = { err: e.message };
+        R.errors++; R.lastError = e.message;
+        updateChip(k, p.id);
+        if (/упал|нет ответа/.test(e.message)) throw e;
+        continue;
+      }
+      const sr = r.sr || 22050;
+      const f32 = r.pcm instanceof Int16Array ? Float32Array.from(r.pcm, (x) => x / 32768) : r.pcm;
+      const dur = f32.length / sr;
+      const ms = Math.max(1, r.ms);
+      results[k].items[p.id] = { url: toWavUrl(f32, sr), dur, ms, info: r.info || null };
+      const sp = dur / (ms / 1000);
+      R.n++; R.audio += dur; R.synth += ms / 1000;
+      if (R.first == null) R.first = sp; else R.worst = R.worst == null ? sp : Math.min(R.worst, sp);
+      collectNotes(R.notes, r.info);
+      saveRun(k, R, true);
+      updateChip(k, p.id);
+    }
+  } catch (e) {
+    R.error = e.message;
+  } finally {
+    try { worker.terminate(); } catch (e) {}
+    R.bg = busy.bg;
+    saveRun(k, R, false);
+    LS.del('lab:alive');
+    if (wake) wake.release().catch(() => {});
+    busy = null;
+    $('#runbox').hidden = true;
+    renderEngines(); renderBlindHint(); renderReport();
+  }
+}
+function saveRun(k, R, partial) {
+  R.speed = R.synth ? R.audio / R.synth : 0;
+  runs[k] = partial ? { ...R, partial: true } : R;
+  LS.set('lab:runs', runs);
+}
+function collectNotes(notes, info) {
+  if (!info) return;
+  if (info.dropped) for (const [s, c] of Object.entries(info.dropped)) notes[s] = (notes[s] || 0) + c;
+  if (info.unk) notes['неизвестных символов'] = (notes['неизвестных символов'] || 0) + info.unk;
+  if (info.vocab) notes.vocab = info.vocab;
+}
+$('#stopBtn').addEventListener('click', () => {
+  if (!busy) return;
+  busy.stop = true;
+  // если движок завис посреди фразы — не ждём его
+  setTimeout(() => { if (busy && busy.rpc) busy.rpc.failAll(new Error('остановлено')); }, 1500);
+  runText('Останавливаю…');
+});
+
+/* ───────────── слепой тест ───────────── */
+const LETTERS = ['А', 'Б', 'В', 'Г'];
+let B = null;
+function trialsNow() {
+  const out = [];
+  for (const p of allPhrases()) {
+    const ks = Object.keys(results).filter((k) => results[k].items[p.id] && results[k].items[p.id].url);
+    if (ks.length >= 2) out.push({ id: p.id, lang: p.lang, text: p.text, hint: p.hint, ks: shuffle(ks) });
+  }
+  return out;
+}
+function shuffle(a) { a = a.slice(); for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; }
+function renderBlindHint() {
+  const n = trialsNow().length;
+  $('#blindBtn').disabled = !n;
+  $('#blindHint').textContent = n ? `фраз для сравнения: ${n}` : 'нужны прогоны хотя бы двух движков в этом сеансе';
+}
+$('#blindBtn').addEventListener('click', () => {
+  const trials = trialsNow();
+  if (!trials.length) return;
+  B = { trials, i: 0, votes: [] };
+  $('#scrim').hidden = false; $('#sheet').hidden = false;
+  renderTrial();
+});
+function closeSheet() { audio.pause(); $('#scrim').hidden = true; $('#sheet').hidden = true; }
+function renderTrial() {
+  const t = B.trials[B.i];
+  $('#sheet').innerHTML = `
+    <div class="sheet-top"><span>${B.i + 1} из ${B.trials.length} · ${esc(t.hint)}</span><button data-close>Закрыть</button></div>
+    <p class="trial-text">${esc(t.text)}</p>
+    <div class="abc">${t.ks.map((_, j) => `<button data-play="${j}">${LETTERS[j]} ▶</button>`).join('')}</div>
+    <p class="ask">Какой вариант лучше?</p>
+    <div class="vote">${t.ks.map((_, j) => `<button data-vote="${j}">${LETTERS[j]}</button>`).join('')}<button class="tie" data-vote="tie">Не слышу разницы</button></div>`;
+}
+$('#sheet').addEventListener('click', (e) => {
+  if (e.target.closest('[data-close]')) { closeSheet(); return; }
+  const t = B && B.trials[B.i]; if (!t) return;
+  const pb = e.target.closest('[data-play]');
+  if (pb) { play(results[t.ks[+pb.dataset.play]].items[t.id].url, pb); return; }
+  const vb = e.target.closest('[data-vote]');
+  if (vb) {
+    audio.pause();
+    B.votes.push({ id: t.id, lang: t.lang, ks: t.ks.map((k) => k), win: vb.dataset.vote === 'tie' ? null : t.ks[+vb.dataset.vote] });
+    B.i++;
+    if (B.i < B.trials.length) renderTrial();
+    else finishBlind();
+  }
+});
+function finishBlind() {
+  const tally = {};
+  let ties = 0;
+  for (const v of B.votes) { if (v.win) tally[v.win] = (tally[v.win] || 0) + 1; else ties++; for (const k of v.ks) tally[k] = tally[k] || 0; }
+  blind = { when: new Date().toLocaleString('ru-RU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }), tally, ties, n: B.votes.length, votes: B.votes };
+  LS.set('lab:blind', blind);
+  closeSheet();
+  renderBlindOut(); renderReport();
+}
+function renderBlindOut() {
+  if (!blind) { $('#blindOut').innerHTML = ''; return; }
+  const rows = Object.entries(blind.tally).sort((a, b) => b[1] - a[1]);
+  $('#blindOut').innerHTML = `<table class="sum">${rows.map(([k, c]) => `<tr><td>${ENGINES[k] ? ENGINES[k].name : k}</td><td>${c}</td></tr>`).join('')}<tr><td>Не слышу разницы</td><td>${blind.ties}</td></tr></table><p class="note">Слепой тест от ${esc(blind.when)}, сравнений: ${blind.n}.</p>`;
+}
+
+/* ───────────── отчёт ───────────── */
+function engineLine(k) {
+  const r = runs[k], E = ENGINES[k];
+  const o = r.opts || {};
+  const set = Object.keys(E.opts).map((x) => { const l = E.opts[x].find((y) => y[0] === o[x]); return l ? l[1] : o[x]; }).join(', ');
+  let s = `• ${E.name} (${set})`;
+  if (r.info && r.info.backend) s += ` — считал: ${r.info.backend === 'webgpu' ? 'видеочип' : 'процессор'}`;
+  if (r.info && r.info.fallback) s += ` [WebGPU не вышло: ${r.info.fallback}]`;
+  s += '\n';
+  if (r.loadMs != null) {
+    s += `  запуск ${n1(r.loadMs / 1000)} с`;
+    if (r.info && r.info.netBytes != null) s += ` (из сети ${mb(r.info.netBytes)} МБ, из кэша ${mb(r.info.cacheBytes)} МБ)`;
+    s += '\n';
+  }
+  if (r.n) s += `  фраз ${r.n}, звук ${n1(r.audio)} с, синтез ${n1(r.synth)} с → скорость ×${n1(r.speed)}; первая фраза ×${n1(r.first)} (прогрев)${r.worst != null ? ', самая медленная из остальных ×' + n1(r.worst) : ''}\n`;
+  if (r.errors) s += `  ошибок: ${r.errors} (${r.lastError})\n`;
+  const notes = Object.entries(r.notes || {}).filter(([x]) => x !== 'vocab');
+  if (r.notes && r.notes.vocab) s += `  словарь фонем: ${r.notes.vocab}\n`;
+  if (notes.length) s += `  вне словаря: ${notes.map(([x, c]) => x + ' ×' + c).join(', ')}\n`;
+  if (r.error) s += `  СБОЙ: ${r.error}\n`;
+  if (r.stopped) s += '  остановлен вручную\n';
+  if (r.partial) s += `  НЕ ЗАКОНЧИЛСЯ: страница оборвалась на фразе ${r.at || 0} из ${r.total} (загрузка ${r.loadMs != null ? 'прошла' : 'не прошла'})\n`;
+  if (r.bg) s += '  страница уходила в фон — цифры неточные\n';
+  s += `  (${r.when})\n`;
+  return s;
+}
+function reportText() {
+  let s = `Вслух · стенд голосов · ${new Date().toLocaleString('ru-RU')}\n`;
+  s += `${dev.ua}\nWebGPU: ${dev.webgpu ? (dev.gpu || 'есть') : 'нет'}${LOCAL ? ' · ЛОКАЛЬНАЯ ПРОВЕРКА' : ''}\n\n`;
+  const ks = Object.keys(ENGINES).filter((k) => runs[k]);
+  s += ks.length ? ks.map(engineLine).join('\n') : 'Прогонов пока нет.\n';
+  if (blind) {
+    s += `\nСлепой тест (${blind.when}, сравнений ${blind.n}): `;
+    s += Object.entries(blind.tally).sort((a, b) => b[1] - a[1]).map(([k, c]) => `${ENGINES[k] ? ENGINES[k].name : k} ${c}`).join(', ');
+    s += `, не слышу разницы ${blind.ties}\n`;
+    const byLang = {};
+    for (const v of blind.votes) { if (!v.win) continue; const g = byLang[v.lang] = byLang[v.lang] || {}; g[v.win] = (g[v.win] || 0) + 1; }
+    const L = { ru: 'рус', en: 'англ', mix: 'смеш' };
+    for (const [l, g] of Object.entries(byLang)) s += `  ${L[l] || l}: ${Object.entries(g).map(([k, c]) => (ENGINES[k] ? ENGINES[k].name : k) + ' ' + c).join(', ')}\n`;
+  }
+  s += `\nОбрывы: ${drops.length ? drops.map((d) => `${d.label}, ${d.phase}${d.i ? ' ' + d.i + '/' + d.n : ''}${d.hidden ? ' (фон)' : ''}`).join('; ') : 'нет'}\n`;
+  const own = customPhrase();
+  if (own) s += `Своя фраза: «${own.text.slice(0, 80)}${own.text.length > 80 ? '…' : ''}»\n`;
+  return s;
+}
+function renderReport() { $('#report').textContent = reportText(); }
+$('#copyBtn').addEventListener('click', async () => {
+  const t = reportText();
+  try { await navigator.clipboard.writeText(t); $('#copyOk').textContent = 'Скопировано'; }
+  catch (e) {
+    const r = document.createRange(); r.selectNodeContents($('#report'));
+    const sel = getSelection(); sel.removeAllRanges(); sel.addRange(r);
+    $('#copyOk').textContent = 'Текст выделен — нажмите «Скопировать»';
+  }
+});
+
+/* ───────────── память ───────────── */
+async function renderStorage() {
+  try { const e = await navigator.storage.estimate(); $('#storage').textContent = `Стенд и приложение в этом браузере занимают ≈ ${mb(e.usage || 0)} МБ. У приложения на экране «Домой» своё хранилище — его это не касается.`; }
+  catch (e) { $('#storage').textContent = ''; }
+}
+$('#clearBtn').addEventListener('click', async () => {
+  if (busy) return;
+  try { await caches.delete('vsluh-lab-v1'); await caches.delete('vsluh-assets-v1'); } catch (e) {}
+  $('#clearBtn').textContent = 'Удалено';
+  renderStorage();
+});
+
+/* ───────────── старт ───────────── */
+$('#custom').value = LS.get('lab:custom', '');
+checkDrop();
+renderDev(); probeGpu().then(() => { renderDev(); renderReport(); });
+renderEngines(); renderPhrases(); renderBlindHint(); renderBlindOut(); renderReport(); renderStorage();
+window.__lab = { results, runs, run, reportText, ENGINES };   // для проверки
+</script>
+</body>
+</html>
