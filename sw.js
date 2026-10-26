@@ -1,8 +1,9 @@
 // Вслух — офлайн-режим. Оболочка приложения кэшируется при установке,
 // голоса и движки кэширует сам воркер озвучки (vsluh-assets-v1).
-const SHELL = 'vsluh-shell-v2';
+const SHELL = 'vsluh-shell-v3';
 const FILES = [
   './', 'index.html', 'app.js', 'tts-worker.js', 'manifest.webmanifest',
+  'ru-text.js', 'ru-stress.mjs', 'kokoro-en.mjs', 'yo-safe.txt',
   'ort.wasm.bundle.min.mjs', 'ort-wasm-simd-threaded.mjs', 'piper_phonemize.mjs',
   'literata-cyrillic-wght-normal.woff2', 'literata-cyrillic-wght-italic.woff2',
   'literata-latin-wght-normal.woff2', 'literata-latin-wght-italic.woff2',

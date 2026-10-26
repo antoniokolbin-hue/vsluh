@@ -60,13 +60,36 @@ const DB = (() => {
   };
 })();
 
-const settings = Object.assign({ voice: 'denis', speed: 1, font: 19, theme: 'auto' }, LS.get('settings', {}));
+const settings = Object.assign({ voice: 'denis', enVoice: 'auto', speed: 1, font: 19, theme: 'auto' }, LS.get('settings', {}));
 // Озвучка готовится «порциями»: когда впереди меньше AHEAD_LOW — движок просыпается и готовит
 // до AHEAD_HIGH, потом выгружается из памяти. Слушание при этом идёт с готовых файлов на диске.
 const AHEAD_HIGH = 40 * 60, AHEAD_LOW = 12 * 60;
 settings.ahead = AHEAD_HIGH;
-const AUDIO_VER = 3;             // сменить, чтобы выбросить старую озвучку
+const AUDIO_VER = 4;             // сменить, чтобы выбросить старую озвучку (4: ё, ударения, числа, английский)
 const saveSettings = () => LS.set('settings', settings);
+
+/* ───────────── русский текст: ё, числа, сокращения, личные ударения (ru-text.js) ───────────── */
+const EN_VOICES = [
+  ['auto', 'Под русский голос', 'мужской или женский — как выбранный выше'],
+  ['af_heart', 'Heart', 'американский, женский'], ['am_michael', 'Michael', 'американский, мужской'],
+  ['bf_emma', 'Emma', 'британский, женский'], ['bm_george', 'George', 'британский, мужской'],
+  ['af_bella', 'Bella', 'американский, женский'],
+];
+const RuReady = (async () => {
+  RuText.loadUser(LS.get('stress', {}));
+  try {
+    const key = new URL('yo-safe-v1.txt', location.href).href;
+    const c = await caches.open(ASSET_CACHE).catch(() => null);
+    const hit = c && await c.match(key);
+    let txt = hit ? await hit.text() : null;
+    if (!txt) {
+      const r = await fetch('yo-safe.txt');
+      if (r.ok) { txt = await r.text(); if (c) c.put(key, new Response(txt)).catch(() => {}); }
+    }
+    if (txt) RuText.loadYo(txt);
+  } catch (e) { /* без словаря ё — просто как раньше */ }
+})();
+const saveStress = () => LS.set('stress', RuText.userObj());
 
 /* ───────────── мелочи ───────────── */
 const esc = (s) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
@@ -342,7 +365,7 @@ function buildModel(raw) {
 const ROMAN = { I: 1, V: 5, X: 10, L: 50, C: 100 };
 function roman(s) { let n = 0; for (let i = 0; i < s.length; i++) { const a = ROMAN[s[i]], b = ROMAN[s[i + 1]] || 0; n += a < b ? -a : a; } return n; }
 function ttsPieces(text, kind) {
-  let t = text
+  let t = RuText.prep(text)
     .replace(/\[[^\]]{0,6}\]|\{[^}]{0,6}\}/g, '')
     .replace(/[«»“”„"]/g, '')
     .replace(/…/g, '...')
@@ -352,7 +375,7 @@ function ttsPieces(text, kind) {
     .replace(/,(\s*,)+/g, ',')
     .replace(/\*+/g, '')
     .replace(/№/g, ' номер ').replace(/§/g, ' параграф ')
-    .replace(/[^\p{L}\p{N}\s.,!?;:()%'\-]/gu, ' ')   // эмодзи и редкие символы движок не любит
+    .replace(/[^\p{L}\p{N}\u0301\s.,!?;:()%'\-]/gu, ' ')   // эмодзи и редкие символы движок не любит (знак ударения оставляем)
     .replace(/\s+/g, ' ').trim();
   if (kind === 'h' || kind === 's') t = t.replace(/\b([IVXLC]{1,7})\b/g, (m) => String(roman(m)));
   if (!/[\p{L}\p{N}]/u.test(t)) return [];
@@ -675,7 +698,7 @@ const Engine = {
     this.voiceReady = false;
     this.loadingVoiceName = settings.voice;
     this.loadingVoice = new Promise((res, rej) => { this._vres = res; this._vrej = rej; });
-    this.worker.postMessage({ type: 'init', voice: settings.voice });
+    this.worker.postMessage({ type: 'init', voice: settings.voice, en: settings.enVoice });
     UI.status();
     return this.loadingVoice;
   },
@@ -688,6 +711,7 @@ const Engine = {
       this._vres && this._vres(); this.pump(); UI.status(); UI.voices();
     } else if (m.type === 'audio') {
       this.nSynth = (this.nSynth || 0) + 1;
+      if (this.dl) this.dl = null;   // докачка (например, английского голоса) закончилась вместе с фразой
       const p = this.pending.get(m.id); this.pending.delete(m.id); p && p.res(m);
     } else if (m.type === 'error') {
       if (m.id != null && this.pending.has(m.id)) { const p = this.pending.get(m.id); this.pending.delete(m.id); p.rej(new Error(m.message)); }
@@ -761,6 +785,8 @@ const Engine = {
     this.busy = true; Wake.sync(); UI.status();
     const tok = this.token, bid = book.id, voice = settings.voice;
     try {
+      await RuReady;
+      if (tok !== this.token) return;
       const s0 = k * CH, s1 = Math.min(s0 + CH, M.sents.length);
       const parts = [], offs = [];
       let len = 0;
@@ -804,6 +830,28 @@ const Engine = {
 
   onJump() { if (this.active) this.pump(); },
 
+  // выбросить готовую озвучку впереди, где есть подходящие фразы, и переозвучить.
+  // Если правка задела то, что сейчас звучит, — перезапускаем с того же места.
+  async refresh(test) {
+    if (!book || !M) return 0;
+    const k0 = this.chunkOf(pos), t = Player.track;
+    const hits = [];
+    for (const k of this.ready.keys()) {
+      if (k < k0) continue;
+      for (let i = k * CH; i < Math.min((k + 1) * CH, M.sents.length); i++) if (test(M.sents[i])) { hits.push(k); break; }
+    }
+    if (!hits.length) return 0;
+    const live = (Player.playing || Player.waiting) && t && hits.some((k) => k >= t.k0 && k < t.k1);
+    if (live || !(Player.playing || Player.waiting)) Player.stop();
+    this.token++; this.busy = false;
+    for (const [, p] of this.pending) p.rej(new Error('cancel'));
+    this.pending.clear();
+    for (const k of hits) { this.ready.delete(k); await DB.del('pcm', this.key(k)).catch(() => {}); await DB.del('meta', this.key(k)).catch(() => {}); }
+    updateTrackBar();
+    if (live) Player.playFrom(pos); else if (this.active) this.pump();
+    return hits.length;
+  },
+
   async prune() {
     // чистим озвучку далеко позади закладки (больше ~500 предложений)
     const lim = this.chunkOf(pos) - 80;
@@ -815,6 +863,7 @@ const Engine = {
 
   async start(i = pos) {
     if (!book.listened) { book.listened = true; DB.put('books', book).catch(() => {}); }
+    if (!LS.get('tipStress', false)) { LS.set('tipStress', true); setTimeout(() => toast('Ударение не там? Задержите палец на слове', 4500), 2500); }
     this.active = true;
     try { navigator.storage && navigator.storage.persist && navigator.storage.persist(); } catch (e) {}
     this.pump();
@@ -1142,6 +1191,17 @@ const UI = {
     if (!el) return;
     el.innerHTML = VOICES.map((v) => `<button class="voice ${v.id === settings.voice ? 'on' : ''}" data-v="${v.id}"><b>${v.name}</b><small>${v.desc}</small><span class="tag" data-tag="${v.id}">${v.id === settings.voice ? 'выбран' : ''}</span></button>`).join('');
     VOICES.forEach(async (v) => { if (v.id !== settings.voice && await Engine.voiceCached(v.id)) { const t = el.querySelector(`[data-tag="${v.id}"]`); if (t) t.textContent = 'скачан'; } });
+    const en = $('#enVoices');
+    if (en) en.innerHTML = EN_VOICES.map(([id, name, desc]) => `<button class="voice ${id === settings.enVoice ? 'on' : ''}" data-en="${id}"><b>${name}</b><small>${desc}</small><span class="tag">${id === settings.enVoice ? 'выбран' : ''}</span></button>`).join('');
+    UI.stressList();
+  },
+  stressList() {
+    const el = $('#stressList');
+    if (!el) return;
+    const list = Object.entries(RuText.userObj()).sort((a, b) => a[0].localeCompare(b[0], 'ru'));
+    el.innerHTML = list.length
+      ? list.map(([k, f]) => `<span class="chip">${esc(f)}<button data-unstress="${esc(k)}" aria-label="Убрать">×</button></span>`).join('')
+      : '<span class="note" style="margin:0">Пока исправлений нет.</span>';
   },
 };
 
@@ -1205,6 +1265,99 @@ $('#setBtn').onclick = async () => {
   } catch (err) { $('#storeInfo').textContent = ''; }
 };
 $('#voices').onclick = (e) => { const b = e.target.closest('[data-v]'); if (b) Engine.switchVoice(b.dataset.v); };
+$('#enVoices').onclick = async (e) => {
+  const b = e.target.closest('[data-en]'); if (!b || b.dataset.en === settings.enVoice) return;
+  settings.enVoice = b.dataset.en; saveSettings(); UI.voices();
+  if (Engine.worker) Engine.worker.postMessage({ type: 'en', voice: settings.enVoice });
+  // готовую озвучку с английским впереди — переозвучить новым голосом
+  const n = await Engine.refresh((t) => /[A-Za-z]{2,}[^A-Za-z]+[A-Za-z]{2,}/.test(t));
+  if (n) toast('Английский голос сменён — переозвучиваю впереди');
+};
+$('#stressList').onclick = async (e) => {
+  const b = e.target.closest('[data-unstress]'); if (!b) return;
+  const w = b.dataset.unstress;
+  RuText.clearStress(w); saveStress(); UI.stressList();
+  await Engine.refresh(sentHas(w));
+};
+
+/* ───────────── ударение: долгое нажатие на слово ───────────── */
+const RU_WORD = /[А-Яа-яЁё]/;
+// есть ли слово во фразе (без учёта ё и регистра)
+const sentHas = (word) => { const k = RuText.keyOf(word); return (t) => { for (const m of t.matchAll(/[А-Яа-яЁё]+(?:-[А-Яа-яЁё]+)*/g)) if (RuText.keyOf(m[0]) === k) return true; return false; }; };
+function wordAt(x, y) {
+  let node = null, off = 0;
+  if (document.caretRangeFromPoint) { const r = document.caretRangeFromPoint(x, y); if (r) { node = r.startContainer; off = r.startOffset; } }
+  else if (document.caretPositionFromPoint) { const c = document.caretPositionFromPoint(x, y); if (c) { node = c.offsetNode; off = c.offset; } }
+  if (!node || node.nodeType !== 3) return null;
+  const t = node.textContent, isL = (c) => c && (RU_WORD.test(c) || c === '-');
+  let a = off, b = off;
+  if (!isL(t[a]) && isL(t[a - 1])) { a--; b--; }
+  while (a > 0 && isL(t[a - 1])) a--;
+  while (b < t.length && isL(t[b])) b++;
+  const w = t.slice(a, b).replace(/^-+|-+$/g, '');
+  if (!/[аеёиоуыэюя]/i.test(w)) return null;
+  return w;
+}
+const LP = { t: 0, x: 0, y: 0, fired: false };
+$('#reader').addEventListener('pointerdown', (e) => {
+  if (e.pointerType === 'mouse' && e.button !== 0) return;
+  LP.fired = false; LP.x = e.clientX; LP.y = e.clientY;
+  clearTimeout(LP.t);
+  LP.t = setTimeout(() => { const w = wordAt(LP.x, LP.y); if (w) { LP.fired = true; openStress(w); } }, 480);
+});
+$('#reader').addEventListener('pointermove', (e) => { if (Math.abs(e.clientX - LP.x) + Math.abs(e.clientY - LP.y) > 12) clearTimeout(LP.t); });
+['pointerup', 'pointercancel', 'pointerleave'].forEach((ev) => $('#reader').addEventListener(ev, () => clearTimeout(LP.t)));
+window.addEventListener('scroll', () => clearTimeout(LP.t), { passive: true });
+$('#reader').addEventListener('contextmenu', (e) => e.preventDefault());
+// после долгого нажатия обычный тап (прыжок голоса) не срабатывает
+$('#reader').addEventListener('click', (e) => { if (LP.fired) { LP.fired = false; e.stopImmediatePropagation(); e.preventDefault(); } }, true);
+
+let stressWord = null;
+function openStress(word) {
+  stressWord = word;
+  $('#stressNote').textContent = '';
+  renderStress();
+  openSheet('#stressSheet');
+}
+function renderStress() {
+  const w = stressWord, form = RuText.userForm(w);
+  const cur = form ? RuText.stressIndexOf(form) : (w.toLowerCase().includes('ё') ? RuText.stressIndexOf(w.toLowerCase()) : -1);
+  const yoNow = form ? form.includes('ё') : w.toLowerCase().includes('ё');
+  let n = -1, html = '';
+  for (const ch of w) {
+    if (RuText.VOW.includes(ch.toLowerCase())) {
+      n++;
+      const shown = n === cur && yoNow && /[еЕёЁ]/.test(ch) ? (ch === ch.toUpperCase() ? 'Ё' : 'ё') : ch;
+      html += `<button class="${n === cur ? 'on' : ''}" data-vi="${n}">${esc(shown)}${n === cur && !yoNow ? '\u0301' : ''}</button>`;
+    } else html += `<span>${esc(ch)}</span>`;
+  }
+  $('#stressWord').innerHTML = html;
+  // «ё» предлагаем, только если ударная гласная — «е»
+  let ce = '';
+  if (cur >= 0) { let k = -1; for (const ch of w.toLowerCase()) { if (RuText.VOW.includes(ch)) { k++; if (k === cur) { ce = ch; break; } } } }
+  $('#stressYo').hidden = !(ce === 'е' || ce === 'ё');
+  $('#stressYo').textContent = yoNow ? 'Это «е», не «ё»' : 'Это «ё»';
+  $('#stressClear').hidden = !form;
+}
+async function applyStress(note) {
+  saveStress(); renderStress(); UI.stressList();
+  const n = await Engine.refresh(sentHas(stressWord));
+  $('#stressNote').textContent = note + (n ? ' Переозвучиваю с текущего места.' : '');
+}
+$('#stressWord').onclick = (e) => {
+  const b = e.target.closest('[data-vi]'); if (!b) return;
+  const f = RuText.setStress(stressWord, +b.dataset.vi, false);
+  if (f) applyStress('Сохранено: ' + f + '.');
+};
+$('#stressYo').onclick = () => {
+  const form = RuText.userForm(stressWord);
+  const cur = form ? RuText.stressIndexOf(form) : RuText.stressIndexOf(stressWord.toLowerCase());
+  if (cur < 0) return;
+  const yoNow = form ? form.includes('ё') : stressWord.toLowerCase().includes('ё');
+  const f = RuText.setStress(stressWord, cur, !yoNow);
+  if (f) applyStress('Сохранено: ' + f + '.');
+};
+$('#stressClear').onclick = () => { RuText.clearStress(stressWord); applyStress('Вернул как в словаре.'); };
 $('#fontIn').oninput = (e) => {
   const anchor = pos;
   settings.font = +e.target.value; saveSettings(); applyLook();
@@ -1259,7 +1412,7 @@ function applyLook() {
    Если iOS перезапустит страницу посреди прослушивания (сбой движка или нехватка памяти),
    при следующем запуске приложение это заметит: всплывёт подсказка, а в настройках
    останется запись — в каком состоянии всё было. Так чиним по фактам, а не наугад. */
-const BUILD = '23.09 · 4';
+const BUILD = '26.10 · 5';
 const Diag = {
   t0: 0, gone: false,
   beat() {

@@ -168,6 +168,15 @@ button:focus-visible,label:focus-visible,input:focus-visible{outline:2px solid v
 .row input[type=range]{flex:1;accent-color:var(--accent)}
 .aa{font-family:var(--read);color:var(--soft)}
 .note{color:var(--muted);font-size:13px;line-height:1.45;margin-top:8px}
+.reader{-webkit-touch-callout:none;-webkit-user-select:none;user-select:none}
+.stress-word{display:flex;flex-wrap:wrap;justify-content:center;align-items:baseline;gap:2px;margin:18px 0 14px;font:500 34px/1.2 var(--read)}
+.stress-word span{color:var(--soft);padding:0 1px}
+.stress-word button{min-width:38px;height:52px;border-radius:12px;border:1px solid var(--line);background:var(--bg);font:inherit;color:var(--ink)}
+.stress-word button.on{border-color:var(--accent);background:var(--accent);color:var(--accent-ink,#fff)}
+.stress-actions{display:flex;gap:8px;flex-wrap:wrap;justify-content:center}
+.stress-list{display:flex;flex-wrap:wrap;gap:6px}
+.stress-list .chip{display:inline-flex;align-items:center;gap:6px;height:34px;padding:0 6px 0 12px;border-radius:17px;border:1px solid var(--line);font:16px var(--read)}
+.stress-list .chip button{width:24px;height:24px;border-radius:12px;color:var(--muted);font:600 15px var(--ui)}
 .btn-line{height:40px;padding:0 16px;border-radius:12px;border:1px solid var(--line);font-weight:500;color:var(--soft)}
 
 .toast{position:fixed;left:50%;top:calc(env(safe-area-inset-top,0px) + 60px);transform:translateX(-50%) translateY(-10px);z-index:30;background:var(--ink);color:var(--bg);padding:10px 16px;border-radius:12px;font-size:14px;opacity:0;transition:.2s;pointer-events:none;max-width:88vw;text-align:center}
@@ -193,7 +202,7 @@ button:focus-visible,label:focus-visible,input:focus-visible{outline:2px solid v
       <button class="x" id="hintX" aria-label="Скрыть">×</button>
     </div>
     <ul class="books" id="books"></ul>
-    <p class="foot">FB2, FB2.ZIP, EPUB и TXT. Книги и озвучка хранятся только на этом устройстве.<br>Голоса: Piper (MIT/CC), произношение: eSpeak NG.</p>
+    <p class="foot">FB2, FB2.ZIP, EPUB и TXT. Книги и озвучка хранятся только на этом устройстве.<br>Голоса: Piper (MIT/CC) и Kokoro (Apache-2.0), произношение: eSpeak NG, буква ё: eyo (MIT).</p>
   </div>
 </section>
 
@@ -236,6 +245,11 @@ button:focus-visible,label:focus-visible,input:focus-visible{outline:2px solid v
     <div class="grp"><h4>Голос</h4><div class="voices" id="voices"></div>
       <p class="note">Голос скачивается один раз (~60 МБ) и дальше работает без интернета. Озвучка готовится порциями — до 40 минут вперёд; этот запас играет и при заблокированном экране.</p>
       <div class="row" style="margin-top:10px"><button class="btn-line" id="testVoice">Проверить голос</button><span id="testOut" class="note" style="margin:0;flex:1"></span></div></div>
+    <div class="grp"><h4>Английский голос</h4><div class="voices" id="enVoices"></div>
+      <p class="note">Kokoro читает английские книги и вставки от двух слов подряд; одиночные английские слова остаются русскому голосу. Скачивается один раз (~90 МБ) при первой английской фразе. Готовит медленнее русского — английскую книгу лучше подготовить заранее, пока телефон на зарядке.</p></div>
+    <div class="grp"><h4>Ударения</h4>
+      <p class="note" style="margin-top:0">Слово прочитано неверно — задержите на нём палец в тексте и выберите ударную гласную. Исправление действует во всех книгах.</p>
+      <div class="stress-list" id="stressList"></div></div>
     <div class="grp"><h4>Текст</h4>
       <div class="row"><span class="aa" style="font-size:14px">А</span><input id="fontIn" type="range" min="15" max="28" step="1"><span class="aa" style="font-size:24px">А</span></div>
     </div>
@@ -248,8 +262,22 @@ button:focus-visible,label:focus-visible,input:focus-visible{outline:2px solid v
   </div>
 </div>
 
+<div class="sheet" id="stressSheet" role="dialog" aria-label="Ударение">
+  <div class="sheet-head"><h3>Ударение</h3><button data-close>Готово</button></div>
+  <div class="sheet-body">
+    <p class="note" style="margin-top:4px">Нажмите на ударную гласную — так это слово будет звучать везде.</p>
+    <div class="stress-word" id="stressWord"></div>
+    <div class="stress-actions">
+      <button class="btn-line" id="stressYo" hidden>Это «ё»</button>
+      <button class="btn-line" id="stressClear">Как в словаре</button>
+    </div>
+    <p class="note" id="stressNote"></p>
+  </div>
+</div>
+
 <div class="toast" id="toast"></div>
 
+<script src="ru-text.js"></script>
 <script src="app.js"></script>
 </body>
 </html>
